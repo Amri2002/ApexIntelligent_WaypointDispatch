@@ -1,0 +1,6 @@
+**/node_modules
+**/.next
+web/e2e/shots
+.git
+.env
+web/.env.local

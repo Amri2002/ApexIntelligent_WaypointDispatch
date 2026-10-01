@@ -1,0 +1,182 @@
+'use client';
+// V1 · Today's run, V2 · Record a stop, G2 · No signal, G3 · Back online.
+// The run is saved on the phone; every stop record is queued on the device and sent when there is signal.
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { FieldBar } from '@/components/FieldBar';
+import { Icon } from '@/components/Icon';
+import { SignaturePad } from '@/components/SignaturePad';
+import { api } from '@/lib/client/api';
+import { cached, enqueue, isOnline, useOutbox } from '@/lib/client/outbox';
+import { compressPhoto } from '@/lib/client/image';
+import type { TripView } from '@/lib/opsService';
+import { fmt, prettyDate, slTime } from '@/lib/time';
+
+interface Run { date: string; vehicleId: string | null; vehicles: string[]; trips: TripView[] }
+type Stop = TripView['stops'][number];
+const OUTCOMES = [['delivered', 'Delivered in full'], ['partial', 'Part delivered'], ['refused', 'Store refused'], ['no_access', 'Could not access']] as const;
+
+export default function DriverPage() {
+  const [vehicle, setVehicle] = useState<string | null>(null);
+  const [run, setRun] = useState<Run | null>(null);
+  const [fromCache, setFromCache] = useState(false);
+  const [openStop, setOpenStop] = useState<string | null>(null);
+  const { pending, online, report, clearReport } = useOutbox();
+
+  useEffect(() => { setVehicle(localStorage.getItem('wp-driver-vehicle')); }, []);
+  const load = useCallback(async () => {
+    const r = await cached(`driver-run:${vehicle ?? 'default'}`, () => api<Run>(`/api/driver/run${vehicle ? `?vehicle=${vehicle}` : ''}`));
+    if (r.data) setRun(r.data); setFromCache(r.fromCache);
+  }, [vehicle]);
+  useEffect(() => { void load(); }, [load, pending.length]);
+
+  // Overlay events that are still on the phone.
+  const local = useMemo(() => {
+    const departed = new Set<string>(); const stops = new Map<string, Record<string, unknown>>();
+    for (const e of pending) { if (e.kind === 'driver.depart') departed.add(String(e.payload.tripId)); if (e.kind === 'driver.stop') stops.set(String(e.payload.stopId), e.payload); }
+    return { departed, stops };
+  }, [pending]);
+
+  const trips = run?.trips ?? [];
+  const stopStatus = (s: Stop) => (local.stops.get(s.id)?.outcome as string | undefined) ?? s.status;
+  const trip = trips.find((t) => t.stops.some((s) => stopStatus(s) === 'pending')) ?? trips[trips.length - 1];
+  const departed = !!trip && (local.departed.has(trip.id) || ['departed', 'completed'].includes(trip.status));
+
+  // Heartbeat while on the road and online, so the dispatcher can tell "quiet" from "no signal".
+  useEffect(() => {
+    if (!trip || !departed) return;
+    const beat = () => { if (isOnline()) void fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events: [{ id: `hb-${trip.id}-${Date.now()}`, kind: 'driver.heartbeat', at: new Date().toISOString(), payload: { tripId: trip.id } }] }) }).catch(() => undefined); };
+    beat(); const t = setInterval(beat, 30000); return () => clearInterval(t);
+  }, [trip, departed, online]);
+
+  const showReport = online && report && report.events.some((e) => e.kind === 'driver.stop');
+  if (showReport) return <SyncReport report={report!} trip={trip} onDone={() => void clearReport()} />;
+
+  const stop = trip?.stops.find((s) => s.id === openStop);
+  if (trip && stop) return <StopScreen trip={trip} stop={stop} online={online} pendingCount={pending.length} onDone={(next) => setOpenStop(next ?? null)} />;
+
+  const next = trip?.stops.find((s) => stopStatus(s) === 'pending');
+  const lastReturn = trip ? trip.startMin + trip.tripMinutes + 60 : 0;
+  return (
+    <div className="phone">
+      <FieldBar kicker={`Nuwan J. · ${run ? prettyDate(run.date) : ''}`} title={trip ? `${trip.vehicleId} · Trip ${trip.tripNo}` : 'Today’s run'} offlineTitle />
+      <main className="pbody">
+        {(run?.vehicles.length ?? 0) > 1 && (
+          <label className="row" style={{ fontSize: 13 }}><span className="muted">Vehicle (demo)</span>
+            <select className="input" style={{ width: 'auto', height: 34 }} value={run?.vehicleId ?? ''} onChange={(e) => { setVehicle(e.target.value); localStorage.setItem('wp-driver-vehicle', e.target.value); setOpenStop(null); }}>{run?.vehicles.map((v) => <option key={v}>{v}</option>)}</select>
+            <span className="tag t-ok right"><Icon name="check" size={12} />{fromCache ? 'Saved run' : 'Saved for offline'}</span></label>
+        )}
+        {!online && <div className="blk" style={{ background: 'var(--off-bg)', borderColor: '#C8CDD6', flexDirection: 'row', alignItems: 'flex-start' }}><Icon name="wifiOff" /><span style={{ fontSize: 14 }}><b>No signal. Keep going.</b> Everything you record is saved on this phone and sends by itself when signal returns.</span></div>}
+        {!trip && <div className="blk">No published trip for your vehicle yet. The plan is published the evening before.</div>}
+        {trip && <>
+          <div className="col" style={{ padding: 16, background: 'var(--ink)', color: '#fff', borderRadius: 14, gap: 6 }}>
+            <span className="lbl" style={{ color: '#B9B7B0' }}>Next</span>
+            <span className="h" style={{ fontSize: 26, fontWeight: 800 }}>{!departed ? `Leave the depot by ${fmt(trip.startMin)}` : next ? `${next.outletId} · ETA ${fmt(next.etaMin)}` : 'Return to the depot'}</span>
+            <span style={{ fontSize: 14, color: '#D9D7D0' }}>{trip.stops.length} stops in {trip.district} · {trip.km} km · back about {fmt(lastReturn)}</span>
+          </div>
+          <div className="blk" style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+            <Icon name="box" style={{ color: trip.sealedAt ? 'var(--ok)' : 'var(--warn)' }} />
+            <div style={{ fontSize: 14 }}>{trip.sealedAt ? <><b>Loaded and sealed {slTime(trip.sealedAt)}</b> at the dock.</> : <b>Not sealed by the loader yet.</b>}
+              {trip.flags.map((f) => <div key={f.id} style={{ marginTop: 4 }}><span className="tag t-bad">Flag</span> <span style={{ fontSize: 13 }}>{trip.stops.find((s) => s.id === f.stopId)?.outletId}: {f.qty} × {f.item} {f.issueType.replace('_', ' ')}. Already taken off your count.</span></div>)}</div>
+          </div>
+          <div className="blk" style={{ padding: '4px 14px', gap: 0 }}>
+            {trip.stops.map((s) => { const st = stopStatus(s); return (
+              <button key={s.id} disabled={!departed} onClick={() => setOpenStop(s.id)} style={{ display: 'grid', gridTemplateColumns: '30px 1fr auto', gap: 10, alignItems: 'center', padding: '10px 0', border: 0, borderBottom: '1px solid var(--line-soft)', background: 'transparent', textAlign: 'left', cursor: departed ? 'pointer' : 'default', color: 'inherit', font: 'inherit' }}>
+                <span style={{ width: 28, height: 28, borderRadius: '50%', border: '2px solid var(--ink)', display: 'grid', placeItems: 'center', font: '700 13px var(--font-head)', background: st !== 'pending' ? 'var(--ink)' : '#fff', color: st !== 'pending' ? '#fff' : 'var(--ink)' }}>{st !== 'pending' ? <Icon name="check" size={14} /> : s.seq}</span>
+                <span><b className="mono">{s.outletId}</b>{local.stops.has(s.id) && <span className="tag t-off" style={{ marginLeft: 6 }}>Saved on phone</span>}<br /><span className="muted" style={{ fontSize: 13 }}>Window {s.outlet.windowOpen}–{s.outlet.windowClose} · {s.expectedUnits} units{s.shortBy ? ` (was ${s.units})` : ''}</span></span>
+                <b>{st !== 'pending' ? 'Done' : fmt(s.etaMin)}</b>
+              </button>); })}
+          </div>
+          {trip.district.match(/Nuwara Eliya|Badulla/) && <div className="row muted" style={{ fontSize: 12.5, alignItems: 'flex-start' }}><Icon name="wifiOff" size={16} /><span>Signal often drops on this route. The app works the same and sends everything later.</span></div>}
+        </>}
+      </main>
+      {trip && <footer className="pfoot" style={{ flexDirection: 'row' }}>
+        <a className="btn btn-s" style={{ minHeight: 56, width: 110 }} href={`https://www.google.com/maps/search/${encodeURIComponent(`${next?.outlet.district ?? trip.district}, Sri Lanka`)}`} target="_blank" rel="noreferrer">Maps</a>
+        {!departed ? <button className="btn btn-p btn-lg grow" onClick={() => void enqueue('driver.depart', { tripId: trip.id })}>Start trip</button>
+          : next ? <button className="btn btn-p btn-lg grow" onClick={() => setOpenStop(next.id)}>Arrived at {next.outletId}</button>
+          : <button className="btn btn-p btn-lg grow" disabled>All stops done</button>}
+      </footer>}
+    </div>
+  );
+}
+
+function StopScreen({ trip, stop, online, pendingCount, onDone }: { trip: TripView; stop: Stop; online: boolean; pendingCount: number; onDone: (nextStopId?: string) => void }) {
+  const [arrivedAt] = useState(() => new Date().toISOString());
+  const [outcome, setOutcome] = useState<string>('delivered');
+  const [units, setUnits] = useState(stop.expectedUnits);
+  const [receiver, setReceiver] = useState('');
+  const [signature, setSignature] = useState<string | null>(null);
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [gps, setGps] = useState<string | null>(null);
+  useEffect(() => { navigator.geolocation?.getCurrentPosition((p) => setGps(`${p.coords.latitude.toFixed(5)},${p.coords.longitude.toFixed(5)}`), () => undefined, { timeout: 5000 }); }, []);
+  const arrMin = (() => { const d = new Date(arrivedAt); return d.getHours() * 60 + d.getMinutes(); })();
+  const nextStop = trip.stops.find((s) => s.seq > stop.seq && s.status === 'pending');
+  const valid = outcome === 'no_access' || outcome === 'refused' || (receiver.trim().length > 1 && (signature || photo));
+  async function complete() {
+    await enqueue('driver.stop', { tripId: trip.id, stopId: stop.id, outcome, deliveredUnits: outcome === 'delivered' ? stop.expectedUnits : outcome === 'partial' ? units : 0, receiverName: receiver || null, signature, photo, arrivedAt, gps });
+    onDone(nextStop?.id);
+  }
+  return (
+    <div className="phone">
+      <FieldBar kicker={`Stop ${stop.seq} of ${trip.stops.length}`} title={<><span className="mono">{stop.outletId}</span> · {stop.outlet.district}</>} offlineTitle />
+      {!online && <div className="row" style={{ padding: '12px 16px', background: 'var(--off-bg)', borderBottom: '1px solid #C8CDD6', fontSize: 14, alignItems: 'flex-start' }}><Icon name="sync" /><span><b>Keep going. Everything saves on this phone</b> and sends by itself when signal returns. Nothing to redo, nothing to call in.{pendingCount ? ` ${pendingCount} waiting to send.` : ''}</span></div>}
+      <main className="pbody" style={{ gap: 10 }}>
+        <button className="btn btn-sm btn-s" style={{ alignSelf: 'flex-start' }} onClick={() => onDone()}><Icon name="back" size={14} />Run</button>
+        <div className="row" style={{ gap: 10 }}>
+          <div className="blk grow" style={{ gap: 2 }}><span className="lbl">Arrived</span><b className="h" style={{ fontSize: 18 }}>{slTime(arrivedAt)}</b><span className="muted" style={{ fontSize: 12 }}>{online ? 'Automatic' : 'Phone clock'}{gps ? ' + GPS' : ''}</span></div>
+          <div className="blk grow" style={{ gap: 2 }}><span className="lbl">Window</span><b className="h" style={{ fontSize: 18 }}>{stop.outlet.windowOpen}–{stop.outlet.windowClose}</b><span className="muted" style={{ fontSize: 12 }}>Planned ETA {fmt(stop.etaMin)}</span></div>
+        </div>
+        <div className="blk"><span className="lbl">1 · Hand over</span>
+          <div className="row" style={{ justifyContent: 'space-between', fontSize: 14 }}><span>Chilled · {stop.chilledUnits} units</span><b>{stop.chilledUnits}</b></div>
+          <div className="row" style={{ justifyContent: 'space-between', fontSize: 14 }}><span>Dry · {stop.units - stop.chilledUnits} units</span><b>{stop.units - stop.chilledUnits}</b></div>
+          {stop.shortBy > 0 && <div className="row" style={{ justifyContent: 'space-between', fontSize: 14, color: 'var(--bad)' }}><span>Flagged at the dock</span><b>−{stop.shortBy}</b></div>}
+          <div className="row" style={{ justifyContent: 'space-between', fontSize: 14, borderTop: '1px solid var(--line-soft)', paddingTop: 6 }}><b>To hand over</b><b>{stop.expectedUnits}</b></div>
+        </div>
+        <div className="col"><span className="lbl">2 · Outcome</span>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>{OUTCOMES.map(([k, l]) => <button key={k} className={`opt ${outcome === k ? 'on' : ''}`} aria-pressed={outcome === k} onClick={() => setOutcome(k)}>{l}</button>)}</div>
+          {outcome === 'partial' && <div className="row"><span className="grow">Units handed over</span><div className="stepper"><button onClick={() => setUnits(Math.max(0, units - 1))} aria-label="Fewer">−</button><span>{units}</span><button onClick={() => setUnits(Math.min(stop.expectedUnits, units + 1))} aria-label="More">+</button></div></div>}
+        </div>
+        {(outcome === 'delivered' || outcome === 'partial') && <div className="blk"><span className="lbl">3 · Proof</span>
+          <label className="col" style={{ gap: 4, fontSize: 13 }}><span className="muted">Received by</span><input className="input" style={{ height: 44 }} placeholder="Name of store staff" value={receiver} onChange={(e) => setReceiver(e.target.value)} /></label>
+          <SignaturePad onChange={setSignature} />
+          <label className="row" style={{ cursor: 'pointer', fontSize: 14 }}>
+            {photo ? <img src={photo} alt="Delivery photo" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 8 }} /> : <span style={{ width: 56, height: 56, borderRadius: 8, background: '#D9D6CD', display: 'grid', placeItems: 'center' }}><Icon name="camera" /></span>}
+            <span><b>{photo ? 'Photo added' : 'Photo of goods at the door'}</b><br /><span className="muted" style={{ fontSize: 12.5 }}>Compressed to save data</span></span>
+            <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={async (e) => { const f = e.target.files?.[0]; if (f) setPhoto(await compressPhoto(f)); }} />
+          </label>
+        </div>}
+        {arrMin > 0 && <span className="muted" style={{ fontSize: 12 }}>Records keep their own time and position, so the order they reach the office does not matter.</span>}
+      </main>
+      <footer className="pfoot">
+        <button className="btn btn-p btn-lg" disabled={!valid} onClick={complete}>{online ? `Complete stop ${stop.seq}` : `Save stop ${stop.seq}`}{nextStop ? ` · next ${nextStop.outletId}` : ''}</button>
+        {!valid && <span className="muted" style={{ fontSize: 12.5, textAlign: 'center' }}>Add the receiver’s name and a signature or photo</span>}
+      </footer>
+    </div>
+  );
+}
+
+function SyncReport({ report, trip, onDone }: { report: NonNullable<ReturnType<typeof useOutbox>['report']>; trip?: TripView; onDone: () => void }) {
+  const stops = report.events.filter((e) => e.kind === 'driver.stop');
+  const matched = stops.map((e) => e.result?.matched).filter(Boolean) as string[];
+  return (
+    <div className="phone">
+      <FieldBar kicker={`${trip?.vehicleId ?? ''} · back in coverage`} title="Back online" />
+      <main className="pbody">
+        <div className="row" style={{ padding: 16, background: 'var(--ink)', color: '#fff', borderRadius: 14, gap: 12 }}>
+          <span style={{ width: 44, height: 44, borderRadius: '50%', background: '#2E8A57', display: 'grid', placeItems: 'center' }}><Icon name="check" size={24} /></span>
+          <div><div className="h" style={{ fontSize: 19, fontWeight: 700 }}>All {stops.length} stop{stops.length > 1 ? 's' : ''} sent. Nothing lost.</div><div style={{ fontSize: 13, color: '#D9D7D0' }}>{stops.filter((e) => e.payload.photo).length} photos, {stops.filter((e) => e.payload.signature).length} signatures</div></div>
+        </div>
+        <div className="blk" style={{ gap: 0 }}><span className="lbl" style={{ paddingBottom: 4 }}>Recorded offline → sent now</span>
+          {stops.map((e) => { const s = trip?.stops.find((x) => x.id === e.payload.stopId); return (
+            <div key={e.id} className="row" style={{ padding: '9px 0', borderTop: '1px solid var(--line-soft)', alignItems: 'flex-start' }}>
+              <Icon name={e.result?.status === 'rejected' ? 'alert' : 'check'} style={{ color: e.result?.status === 'rejected' ? 'var(--bad)' : 'var(--ok)' }} />
+              <span className="grow"><b>Stop {s?.seq ?? ''} · <span className="mono">{s?.outletId ?? ''}</span></b><br /><span className="muted" style={{ fontSize: 13 }}>{String(e.payload.outcome).replace('_', ' ')}{e.payload.deliveredUnits != null ? `, ${e.payload.deliveredUnits} units` : ''}{e.result?.status === 'rejected' ? ` — ${e.result.message}` : ''}</span></span>
+              <span className="muted" style={{ fontSize: 13, textAlign: 'right' }}>{slTime(e.at)}<br />→ {slTime(report.at)}</span>
+            </div>); })}
+        </div>
+        {matched.map((m, i) => <div key={i} className="blk" style={{ background: '#FFF8EC', borderColor: '#E8C98A' }}><div className="row"><span className="tag t-warn">Matched automatically</span><span className="muted" style={{ fontSize: 12 }}>no action for you</span></div><span style={{ fontSize: 14 }}>{m}</span></div>)}
+        <div className="row muted" style={{ fontSize: 13.5 }}><Icon name="check" size={16} /><span>No plan changes were made while you were offline.</span></div>
+      </main>
+      <footer className="pfoot"><button className="btn btn-p btn-lg" onClick={onDone}>Continue</button></footer>
+    </div>
+  );
+}

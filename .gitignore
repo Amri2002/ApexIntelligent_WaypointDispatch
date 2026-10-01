@@ -1,0 +1,9 @@
+node_modules/
+.next/
+out/
+.env
+.env.local
+web/.env.local
+web/e2e/shots/
+*.log
+.DS_Store
