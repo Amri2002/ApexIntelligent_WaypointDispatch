@@ -3,6 +3,10 @@ import pg from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { seedAll } from '../src/lib/seed-core.mjs';
+import nextEnv from '@next/env';
+
+// Load .env / .env.local the same way Next.js does (Docker passes real env vars, which win).
+nextEnv.loadEnvConfig(new URL('..', import.meta.url).pathname);
 
 const url = process.env.DATABASE_URL;
 if (!url) { console.error('DATABASE_URL is not set'); process.exit(1); }
