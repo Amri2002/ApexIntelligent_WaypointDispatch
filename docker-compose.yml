@@ -18,7 +18,8 @@ services:
     depends_on:
       db: { condition: service_healthy }
     environment:
-      DATABASE_URL: postgres://waypoint:waypoint@db:5432/waypoint
+      # Uses the bundled Postgres unless DATABASE_URL is set in .env (e.g. a Neon URL).
+      DATABASE_URL: ${DATABASE_URL:-postgres://waypoint:waypoint@db:5432/waypoint}
       AUTH_SECRET: ${AUTH_SECRET:-change-me-in-production-32-chars-min}
       DATA_DIR: /app/data
       SEED_FORCE: ${SEED_FORCE:-0}
