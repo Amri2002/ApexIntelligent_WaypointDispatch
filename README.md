@@ -30,7 +30,7 @@ docker compose up --build
 Open **http://localhost:3000**. On first start the web container migrates the database, then loads the reference data and the demo day (Friday 10 April 2026) from `data/`. No other steps are needed.
 
 * To start over: press **Reset demo day** in the dispatcher sidebar, or run `SEED_FORCE=1 docker compose up`.
-* Settings: copy `.env.example` to `.env` to change `AUTH_SECRET` or the database URL.
+* Settings: Docker needs no `.env`. The database URL is fixed to the bundled Postgres. To change the session secret, create a `.env` file in the repo root containing `AUTH_SECRET=<random string>`.
 
 ### Without Docker (for development)
 
