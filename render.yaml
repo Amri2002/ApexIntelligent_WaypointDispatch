@@ -1,9 +1,7 @@
-# One-click deploy on Render: New → Blueprint → pick this repo.
-databases:
-  - name: waypoint-db
-    plan: free
-    databaseName: waypoint
-    user: waypoint
+# Render Blueprint: New → Blueprint → pick this repo.
+# The web app runs on Render; the database is Neon (free tier does not expire).
+# When you apply the Blueprint, Render asks for DATABASE_URL: paste the Neon connection string
+# (postgresql://...neon.tech/neondb?sslmode=require). It is stored in Render, never in this repo.
 services:
   - type: web
     name: waypoint-dispatch
@@ -13,7 +11,7 @@ services:
     healthCheckPath: /login
     envVars:
       - key: DATABASE_URL
-        fromDatabase: { name: waypoint-db, property: connectionString }
+        sync: false          # Render prompts for the value; nothing secret is committed
       - key: AUTH_SECRET
         generateValue: true
       - key: DATA_DIR

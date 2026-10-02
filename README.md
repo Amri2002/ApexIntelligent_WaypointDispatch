@@ -48,7 +48,7 @@ BASE_URL=http://localhost:3000 node e2e/walkthrough.mjs   # full 4-role walkthro
 
 ### Deploy
 
-`render.yaml` is a Render Blueprint (Docker web service + managed Postgres). To use it: **New → Blueprint →** select this repository. Any Docker host also works if it provides `DATABASE_URL` and `AUTH_SECRET`.
+`render.yaml` is a Render Blueprint for the web service; the database is a free [Neon](https://neon.tech) Postgres. To use it: create a Neon project, then on Render choose **New → Blueprint →** select this repository, and paste the Neon connection string when Render asks for `DATABASE_URL`. The app creates the tables and loads the demo data on first start. Any Docker host also works if it provides `DATABASE_URL` and `AUTH_SECRET`.
 
 ## 2. Seeded accounts
 

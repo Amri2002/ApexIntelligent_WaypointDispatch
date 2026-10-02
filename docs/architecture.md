@@ -72,4 +72,4 @@ flowchart LR
 
 ## Deployment
 
-`docker compose up` builds the web image and starts Postgres. The web container runs `node scripts/migrate.mjs` (migrate, then seed) before `next start`. `render.yaml` sets up the same stack on Render: a Docker web service and a managed Postgres.
+`docker compose up` builds the web image and starts Postgres. The web container runs `node scripts/migrate.mjs` (migrate, then seed) before `next start`. `render.yaml` deploys the same Docker image as a Render web service, connected to a Neon Postgres database through `DATABASE_URL`.
