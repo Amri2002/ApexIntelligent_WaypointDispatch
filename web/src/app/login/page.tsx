@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { Logo } from '@/components/Logo';
+import { Icon } from '@/components/Icon';
 
 const ACCOUNTS = [
   { email: 'dispatcher@waypoint.lk', role: 'Dispatcher', who: 'Dilani · Peliyagoda planning office', device: 'Desktop' },
@@ -12,6 +13,7 @@ const ACCOUNTS = [
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -46,7 +48,12 @@ export default function Login() {
           </div>
           <form onSubmit={signIn} className="col" style={{ gap: 10, borderTop: '1px solid var(--line-soft)', paddingTop: 14 }}>
             <label className="col" style={{ gap: 4 }}><span className="lbl">Email</span><input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" /></label>
-            <label className="col" style={{ gap: 4 }}><span className="lbl">Password</span><input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" /></label>
+            <label className="col" style={{ gap: 4 }}><span className="lbl">Password</span><span style={{ position: 'relative', display: 'block' }}>
+              <input className="input" type={showPw ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" style={{ paddingRight: 44 }} />
+              <button type="button" onClick={() => setShowPw((v) => !v)} aria-label={showPw ? 'Hide password' : 'Show password'} aria-pressed={showPw} title={showPw ? 'Hide password' : 'Show password'} style={{ position: 'absolute', right: 2, top: 2, width: 36, height: 36, display: 'grid', placeItems: 'center', border: 0, background: 'transparent', cursor: 'pointer', color: 'inherit', padding: 0 }}>
+                <Icon name={showPw ? 'eyeOff' : 'eye'} size={18} />
+              </button>
+            </span></label>
             {error && <div className="tag t-bad" role="alert">{error}</div>}
             <button className="btn btn-p" disabled={busy}>Sign in</button>
             <div className="muted" style={{ fontSize: 12 }}>Password for all demo accounts: <span className="mono">Waypoint@2026</span></div>
