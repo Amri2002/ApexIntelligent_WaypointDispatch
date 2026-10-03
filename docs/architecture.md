@@ -67,7 +67,7 @@ flowchart LR
 ## Security
 
 * Passwords are hashed with bcrypt. The session is an HS256 JWT in an `httpOnly`, `sameSite=lax` cookie, valid for 7 days.
-* Each API handler checks the role (`requireRole`). Store managers only see their own outlet; drivers only see their own vehicle (the demo also offers a vehicle picker).
+* Each API handler checks the role (`requireRole`). With `DEMO_MODE=false`, the server also holds each account to its own data (`ownOutlet`, `ownVehicle`, `ownDepot` in `lib/auth.ts`). A store manager sees and acts for their own outlet only, a driver for their own vehicle's trips, and a loader for their own depot. Field updates for someone else's trip are rejected during sync. `DEMO_MODE` defaults to true so the "(demo)" pickers can show every case during judging.
 * Secrets come from the environment (`AUTH_SECRET`, `DATABASE_URL`). See `.env.example`.
 
 ## Deployment

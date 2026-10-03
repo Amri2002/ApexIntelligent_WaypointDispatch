@@ -19,6 +19,7 @@
 // the earliest window closes. Each order is placed
 // where it adds the least time, preferring to keep refrigerated vehicles and vans for the orders
 // that need them. Anything that cannot be placed is deferred with a diagnosed reason and a rank.
+import { lateRisk as lateRiskModel } from './lateRisk';
 import type { EngineInput, EOrder, EOutlet, EVehicle, PlannedStop, PlannedTrip, PlanResult, DeferredOrder, DeferReason, Violation } from './types';
 
 export const FRESH_START = 3 * 60 + 30; // 03:30
@@ -96,8 +97,8 @@ export class Engine {
       const units = os.reduce((s, o) => s + o.units, 0);
       // Predicted service time: the allowance, adjusted for order size (placeholder until the Datathon model is wired in).
       const predService = handling * (0.9 + 0.25 * Math.min(1, units / 250));
-      const slack = close - pclock;
-      const lateRisk = Math.min(0.95, Math.max(0.02, 1 / (1 + Math.exp((slack - 10) / 14))));
+      // Minutes to spare at the planned (free-flow) ETA, mapped through the model fitted on history.
+      const lateRisk = lateRiskModel(close - clock, !!this.ctx.monsoon);
       stops.push({ outletId: oid, orderIds: os.map((o) => o.id), etaMin: Math.round(clock), serviceStartMin: Math.round(svcStart), handlingMin: handling, predServiceMin: r1(predService), predArrivalMin: Math.round(pclock), lateRisk: Math.round(lateRisk * 100) / 100 });
       clock = svcStart + handling;
       pclock = Math.max(pclock, open) + predService;

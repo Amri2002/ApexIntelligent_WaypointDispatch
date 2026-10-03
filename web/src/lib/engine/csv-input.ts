@@ -15,9 +15,10 @@ export function inputFromCsv(dataDir: string, depot: string, opts: { monsoon?: b
     id: o.outlet_id, brand: o.brand, district: o.district, depot: o.depot, dockType: o.dock_type, parkingConstraint: o.parking_constraint, windowOpen: o.window_open_time, windowClose: o.window_close_time,
   }]));
   const status = Object.fromEntries(readCsv(p('demo_fleet_status.csv')).map((r) => [r.vehicle_id, r.status]));
+  const fuelUsed: Record<string, number> = fs.existsSync(p('fuel_used_week.csv')) ? Object.fromEntries(readCsv(p('fuel_used_week.csv')).map((r) => [r.vehicle_id, +r.fuel_used_l])) : {};
   const vehicles: EVehicle[] = readCsv(p('vehicles.csv')).map((v) => ({
     id: v.vehicle_id, type: v.type, temp: v.temp, weightCapKg: +v.weight_cap_kg, volumeCapM3: +v.volume_cap_m3, kmPerL: +v.km_per_l,
-    weeklyFuelQuotaL: +v.weekly_fuel_quota_l, fuelUsedWeekL: 0, depot: v.depot, status: status[v.vehicle_id] ?? 'available',
+    weeklyFuelQuotaL: +v.weekly_fuel_quota_l, fuelUsedWeekL: fuelUsed[v.vehicle_id] ?? 0, depot: v.depot, status: status[v.vehicle_id] ?? 'available',
   }));
   const travel = new Map<string, ETravel>(readCsv(p('district_travel.csv')).map((t) => [t.district, {
     district: t.district, depot: t.depot, depotToDistrictKm: +t.depot_to_district_km, depotToDistrictMin: +t.depot_to_district_freeflow_min, interStopKm: +t.inter_stop_km, interStopMin: +t.inter_stop_freeflow_min,

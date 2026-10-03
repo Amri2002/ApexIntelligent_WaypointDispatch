@@ -2,8 +2,9 @@
 // offline sync endpoint that applies queued events exactly once.
 import { and, eq, inArray, asc, desc, sql } from 'drizzle-orm';
 import { db, schema as s } from '@/db';
-import { HttpError, type Session } from './auth';
+import { HttpError, DEMO_MODE, type Session } from './auth';
 import { DEMO_DATE, prettyDate } from './time';
+import { expectedArrival } from './engine/arrivalDelay';
 import { nextOperatingDay } from './planService';
 
 const OFFLINE_AFTER_MS = 90_000; // a departed vehicle with no record for 90 s shows as offline
@@ -47,9 +48,10 @@ export async function loaderDepartures(depot: string) {
   const notes = await db.select().from(s.notifications).where(eq(s.notifications.audience, `LOADER:${depot}`)).orderBy(desc(s.notifications.createdAt)).limit(3);
   return { depot, date: DEMO_DATE, trips, notes };
 }
-export async function loaderTrip(id: string) {
+export async function loaderTrip(id: string, session?: Session) {
   const [t] = await publishedTrips({ tripIds: [id] });
   if (!t) throw new HttpError(404, 'Trip not found or not published');
+  if (session) { try { await assertOwnTrip(session, id); } catch { throw new HttpError(404, 'Trip not found or not published'); } }
   return t;
 }
 
@@ -58,12 +60,13 @@ export async function driverRun(session: Session, vehicleId?: string | null) {
   const all = await publishedTrips({});
   const vehicles = [...new Set(all.map((t) => t.vehicleId))].sort();
   let vid = vehicleId || session.vehicleId || null;
-  if (!vid || !vehicles.includes(vid)) {
+  if (!DEMO_MODE) vid = session.vehicleId;
+  else if (!vid || !vehicles.includes(vid)) {
     // Default: the vehicle that serves the demo store manager's outlet, so the walkthrough connects.
     const store = (await db.select().from(s.users).where(eq(s.users.role, 'STORE_MANAGER')))[0];
     vid = all.find((t) => t.stops.some((x) => x.outletId === store?.outletId))?.vehicleId ?? vehicles[0] ?? null;
   }
-  return { date: DEMO_DATE, vehicleId: vid, vehicles, trips: all.filter((t) => t.vehicleId === vid), serverTime: new Date().toISOString() };
+  return { date: DEMO_DATE, vehicleId: vid, vehicles: DEMO_MODE ? vehicles : vehicles.filter((v) => v === vid), demo: DEMO_MODE, trips: all.filter((t) => t.vehicleId === vid), serverTime: new Date().toISOString() };
 }
 
 // ---------- Store manager ----------
@@ -75,14 +78,15 @@ export async function storeOverview(outletId: string) {
   const stopIds = [...new Set(orders.map((o) => o.stopId).filter(Boolean))] as string[];
   const stopRows = stopIds.length ? await db.select().from(s.stops).where(inArray(s.stops.id, stopIds)) : [];
   const trips = stopRows.length ? await publishedTrips({ tripIds: [...new Set(stopRows.map((x) => x.tripId))] }) : [];
+  const monsoon = !!(await db.select().from(s.calendarDays).where(eq(s.calendarDays.date, DEMO_DATE)))[0]?.monsoon;
   const deliveries = trips.map((t) => {
     const stop = t.stops.find((x) => x.outletId === outletId)!;
     const done = t.stops.filter((x) => x.status !== 'pending').length;
-    return { trip: { id: t.id, vehicleId: t.vehicleId, tripNo: t.tripNo, status: t.status, startMin: t.startMin, sealedAt: t.sealedAt, departedAt: t.departedAt, lastSyncAt: t.lastSyncAt, isOffline: t.isOffline, stopsTotal: t.stops.length, stopsDone: done, flags: t.flags.filter((f) => f.stopId === stop.id) }, stop };
+    return { trip: { id: t.id, vehicleId: t.vehicleId, tripNo: t.tripNo, status: t.status, startMin: t.startMin, sealedAt: t.sealedAt, departedAt: t.departedAt, lastSyncAt: t.lastSyncAt, isOffline: t.isOffline, stopsTotal: t.stops.length, stopsDone: done, flags: t.flags.filter((f) => f.stopId === stop.id) }, stop , arrival: expectedArrival(stop.etaMin, stop.seq, monsoon) };
   });
   const notes = await db.select().from(s.notifications).where(eq(s.notifications.audience, `OUTLET:${outletId}`)).orderBy(desc(s.notifications.createdAt));
   const outlets = await db.select({ id: s.outlets.id, brand: s.outlets.brand, district: s.outlets.district }).from(s.outlets).orderBy(asc(s.outlets.id));
-  return { outlet, date: DEMO_DATE, nextDate, orders, deliveries, notes, outlets, cutoff: '16:00' };
+  return { outlet, date: DEMO_DATE, nextDate, orders, deliveries, notes, outlets: DEMO_MODE ? outlets : outlets.filter((o) => o.id === outletId), demo: DEMO_MODE, cutoff: '16:00' };
 }
 
 const CATALOGUE: Record<string, { name: string; pack: string; temp: 'chilled' | 'ambient'; kg: number; m3: number }> = {
@@ -140,6 +144,15 @@ export async function recordReceipt(outletId: string, stopId: string, body: { st
 // ---------- Offline sync ----------
 export interface SyncEventIn { id: string; kind: string; at: string; payload: Record<string, unknown> }
 
+/** Outside demo mode, a driver may only touch their own vehicle's trips and a loader only their depot's. */
+async function assertOwnTrip(session: Session, tripId: string | undefined) {
+  if (DEMO_MODE || !tripId) return;
+  const row = (await db.select({ vehicleId: s.trips.vehicleId, depot: s.plans.depot }).from(s.trips).innerJoin(s.plans, eq(s.trips.planId, s.plans.id)).where(eq(s.trips.id, tripId)))[0];
+  if (!row) throw new Error('Trip not found');
+  if (session.role === 'DRIVER' && row.vehicleId !== session.vehicleId) throw new Error('This trip is not on your vehicle');
+  if (session.role === 'LOADER' && row.depot !== session.depot) throw new Error('This trip is not at your depot');
+}
+
 /** Applies queued field events exactly once (idempotent by client event id). */
 export async function applyEvents(session: Session, events: SyncEventIn[]) {
   const results: { id: string; status: 'applied' | 'duplicate' | 'rejected'; message?: string; matched?: string }[] = [];
@@ -150,6 +163,8 @@ export async function applyEvents(session: Session, events: SyncEventIn[]) {
     try {
       const p = e.payload as Record<string, never>;
       const at = new Date(e.at);
+      const stopTrip = !p.tripId && p.stopId ? (await db.select({ tripId: s.stops.tripId }).from(s.stops).where(eq(s.stops.id, p.stopId)))[0]?.tripId : undefined;
+      await assertOwnTrip(session, (p.tripId as string | undefined) ?? stopTrip);
       switch (e.kind) {
         case 'loader.check': {
           if (session.role !== 'LOADER') throw new Error('Only loaders can load');
