@@ -90,7 +90,7 @@ function DeferralNotice({ note, outlet, onDone }: { note: Note; outlet: string; 
     <div className="col" style={{ padding: 16, background: '#fff', border: '2px solid var(--bad)', borderRadius: 14, gap: 8 }}>
       <span className="tag t-bad" style={{ alignSelf: 'flex-start' }}>{b.temp === 'chilled' ? 'Chilled' : 'Order'} moved · {slTime(note.createdAt)}</span>
       <span className="h" style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.15 }}>Your {b.temp} order arrives <u>{prettyDate(b.to, { weekday: 'long' })}</u>, not {prettyDate(b.from, { weekday: 'long' })}</span>
-      <span style={{ fontSize: 14 }}>{b.reason}. Your order is <b>first in line</b> on {prettyDate(b.to)} and cannot be moved again.</span>
+      <span style={{ fontSize: 14 }}>{b.reason}. Your order is <b>first in line</b> on {prettyDate(b.to)}: it is planned before any new orders, and moving it again needs a written reason from the dispatcher.</span>
       <div style={{ fontSize: 13.5, borderTop: '1px solid var(--line-soft)', paddingTop: 8 }} className="col">
         <span><span className="muted">Order</span> <span className="mono">{b.orderRef}</span> · {b.units} units</span>
         <span><span className="muted">New arrival</span> <b>{prettyDate(b.to)} · first wave</b> · your window {b.outletWindow}</span>

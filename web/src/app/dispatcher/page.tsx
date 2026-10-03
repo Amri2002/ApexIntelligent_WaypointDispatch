@@ -2,7 +2,7 @@
 // D1 · Order queue — every confirmed order for the next run, in one place, with what will break the plan surfaced first.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { DispatcherShell, DepotSwitch, useDepot, brandTag, tempTag, Toast } from '@/components/DispatcherShell';
+import { DispatcherShell, DepotSwitch, useDepot, DaySwitch, usePlanDate, brandTag, tempTag, Toast } from '@/components/DispatcherShell';
 import { Icon } from '@/components/Icon';
 import { api } from '@/lib/client/api';
 import { prettyDate } from '@/lib/time';
@@ -16,6 +16,7 @@ const FILTERS = ['All', 'Chilled', 'Van-only', 'Mall window', 'Deferred yesterda
 
 export default function OrdersPage() {
   const [depot, setDepot] = useDepot();
+  const [date, day, setDay, days] = usePlanDate();
   const [data, setData] = useState<Data | null>(null);
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>('All');
   const [q, setQ] = useState('');
@@ -23,7 +24,7 @@ export default function OrdersPage() {
   const [toast, setToast] = useState<{ msg: string; bad?: boolean } | null>(null);
   const router = useRouter();
 
-  const load = useCallback(() => api<Data>(`/api/orders?depot=${depot}`).then(setData).catch((e) => setToast({ msg: e.message, bad: true })), [depot]);
+  const load = useCallback(() => { if (!date) return; return api<Data>(`/api/orders?depot=${depot}&date=${date}`).then(setData).catch((e) => setToast({ msg: e.message, bad: true })); }, [depot, date]);
   useEffect(() => { void load(); }, [load]);
 
   const orders = useMemo(() => (data?.orders ?? []).filter((o) => o.status !== 'split'), [data]);
@@ -49,7 +50,7 @@ export default function OrdersPage() {
 
   async function buildPlan() {
     setBusy(true);
-    try { await api('/api/plans', { json: { depot } }); router.push('/dispatcher/plan'); }
+    try { await api('/api/plans', { json: { depot, date } }); router.push('/dispatcher/plan'); }
     catch (e) { setToast({ msg: (e as Error).message, bad: true }); setBusy(false); }
   }
 
@@ -57,12 +58,18 @@ export default function OrdersPage() {
     <DispatcherShell>
       <header className="topbar">
         <h1 style={{ fontSize: 20, fontWeight: 700 }}>Orders for {data ? prettyDate(data.date, { weekday: 'long', day: 'numeric', month: 'long' }) : '…'}</h1>
-        <span className="tag t-ink">Cutoff closed 16:00</span>
+        {day === 'today' && <span className="tag t-ink">Cutoff closed 16:00</span>}
         {data?.calendar && data.calendar.festivalRamp > 0 && <span className="tag t-warn">New Year ramp · {data.calendar.festivalRamp}</span>}
         {data?.calendar?.monsoon && <span className="tag">Monsoon</span>}
-        <div className="row right" style={{ gap: 12 }}><DepotSwitch depot={depot} onChange={setDepot} /></div>
+        <div className="row right" style={{ gap: 12 }}><DaySwitch day={day} onChange={setDay} days={days} /><DepotSwitch depot={depot} onChange={setDepot} /></div>
       </header>
       <div className="content">
+        {day === 'next' && data && (
+          <div className="banner" style={{ background: '#EEF4FA', border: '1px solid #BFD3E6', borderRadius: 10 }}>
+            <Icon name="clock" size={20} />
+            <span style={{ fontSize: 13.5 }}><b>Next run.</b> {(() => { const d = orders.filter((o) => o.deferredYesterday).length, n = orders.length - d; return `${d} ${d === 1 ? 'order' : 'orders'} deferred from the previous run go first; ${n} new ${n === 1 ? 'order' : 'orders'} came from stores after the cutoff.`; })()} This demo seeds no regular orders for this day, and the loader, driver and store apps stay on the demo day.</span>
+          </div>
+        )}
         <div className="grid-kpi">
           <div className="card kpi"><span className="lbl">Confirmed orders</span><span className="kv">{orders.length}</span><span className="muted" style={{ fontSize: 12 }}>{['Fresh', 'Style', 'Tech'].map((b) => `${b} ${orders.filter((o) => o.brand === b).length}`).join(' · ')}</span></div>
           <div className="card kpi"><span className="lbl">Volume</span><span className="kv">{orders.reduce((a, o) => a + o.volumeM3, 0).toFixed(1)} m³</span><span style={{ fontSize: 12, color: 'var(--chill-ink)', fontWeight: 600 }}>{chilledM3.toFixed(1)} m³ chilled ({chilled.length} orders)</span></div>

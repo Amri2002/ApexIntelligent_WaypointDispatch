@@ -2,7 +2,7 @@
 // D2 · Plan and allocate — the engine's proposal on a timeline, with live constraint checks and manual edits.
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { DispatcherShell, DepotSwitch, useDepot, Toast } from '@/components/DispatcherShell';
+import { DispatcherShell, DepotSwitch, useDepot, DaySwitch, usePlanDate, Toast } from '@/components/DispatcherShell';
 import { Icon } from '@/components/Icon';
 import { api, ApiError } from '@/lib/client/api';
 import type { PlanView } from '@/lib/planService';
@@ -13,16 +13,17 @@ const pct = (m: number) => `${((Math.max(START, Math.min(END, m)) - START) / SPA
 
 export default function PlanPage() {
   const [depot, setDepot] = useDepot();
+  const [date, day, setDay, days] = usePlanDate();
   const [view, setView] = useState<PlanView | null>(null);
   const [sel, setSel] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ msg: string; bad?: boolean } | null>(null);
   const [moving, setMoving] = useState<{ orderId: string; ref: string } | null>(null);
 
-  const load = useCallback(() => api<PlanView>(`/api/plans?depot=${depot}`).then((v) => { setView(v); setSel((s) => (s && v.trips.some((t) => t.id === s) ? s : v.trips[0]?.id ?? null)); }), [depot]);
+  const load = useCallback(() => { if (!date) return; return api<PlanView>(`/api/plans?depot=${depot}&date=${date}`).then((v) => { setView(v); setSel((s) => (s && v.trips.some((t) => t.id === s) ? s : v.trips[0]?.id ?? null)); }); }, [depot, date]);
   useEffect(() => { void load(); }, [load]);
 
-  const run = async () => { setBusy(true); try { const v = await api<PlanView>('/api/plans', { json: { depot } }); setView(v); setSel(v.trips[0]?.id ?? null); setToast({ msg: `Planned ${v.totals.placed} of ${v.totals.orders} orders` }); } catch (e) { setToast({ msg: (e as Error).message, bad: true }); } setBusy(false); };
+  const run = async () => { setBusy(true); try { const v = await api<PlanView>('/api/plans', { json: { depot, date } }); setView(v); setSel(v.trips[0]?.id ?? null); setToast({ msg: `Planned ${v.totals.placed} of ${v.totals.orders} orders` }); } catch (e) { setToast({ msg: (e as Error).message, bad: true }); } setBusy(false); };
   const publish = async () => { if (!view?.plan) return; setBusy(true); try { setView(await api<PlanView>(`/api/plans/${view.plan.id}/publish`, { json: {} })); setToast({ msg: 'Published to docks and drivers' }); } catch (e) { setToast({ msg: (e as Error).message, bad: true }); } setBusy(false); };
   const move = async (orderId: string, vehicleId: string | null) => {
     if (!view?.plan) return;
@@ -45,6 +46,7 @@ export default function PlanPage() {
         <h1 style={{ fontSize: 20, fontWeight: 700 }}>Plan · {view ? prettyDate(view.date, { weekday: 'long', day: 'numeric', month: 'long' }) : '…'}</h1>
         {view?.plan && <span className={`tag ${published ? 't-ok' : ''}`}>{published ? `Published ${new Date(view.plan.publishedAt!).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} by ${view.plan.publishedBy}` : 'Draft'}</span>}
         <div className="row right" style={{ gap: 10 }}>
+          <DaySwitch day={day} onChange={setDay} days={days} />
           <DepotSwitch depot={depot} onChange={setDepot} />
           {!published && <button className="btn btn-s" onClick={run} disabled={busy}>{view?.plan ? 'Re-run planner' : 'Run planner'}</button>}
           <button className="btn btn-p" onClick={publish} disabled={busy || !view?.plan || published || (t?.undecided ?? 0) > 0} title={(t?.undecided ?? 0) > 0 ? 'Decide the unplaced orders first' : ''}>{published ? 'Published' : 'Publish to docks and drivers'}</button>
