@@ -25,6 +25,7 @@ export default function StorePage() {
   const deferrals = data.notes.filter((n) => n.kind === 'deferral');
   const requests = data.notes.filter((n) => n.kind === 'window_request' && !n.response);
   const flags = data.notes.filter((n) => n.kind === 'flag');
+  const changes = data.notes.filter((n) => n.kind === 'plan_change');
   const today = data.deliveries[0];
   const nextOrders = data.orders.filter((o) => o.deliveryDate === data.nextDate);
 
@@ -44,6 +45,7 @@ export default function StorePage() {
         {deferrals.map((n) => <DeferralNotice key={n.id} note={n} outlet={data.outlet.id} onDone={() => void load()} />)}
 
         {today ? <Arrival d={today} outlet={data.outlet} /> : <div className="blk"><span className="lbl">Today · {prettyDate(data.date)}</span><span>{data.orders.some((o) => o.deliveryDate === data.date && o.status === 'deferred') ? 'Your order for today was moved — see the notice above.' : 'No delivery on the published plan for today yet.'}</span></div>}
+        {changes.map((n) => <div key={n.id} className="blk" style={{ background: '#EEF4FA', borderColor: '#BFD3E6' }}><span className="tag" style={{ alignSelf: 'flex-start' }}>Plan changed · {slTime(n.createdAt)}</span><b>{n.title}</b><span style={{ fontSize: 13.5 }}>{n.body}</span></div>)}
         {flags.map((n) => <div key={n.id} className="blk" style={{ background: '#FFF8EC', borderColor: '#E8C98A' }}><span className="tag t-warn" style={{ alignSelf: 'flex-start' }}>From the dock · {slTime(n.createdAt)}</span><b>{n.title}</b><span style={{ fontSize: 13.5 }}>{n.body}</span></div>)}
         {today && (today.stop.status !== 'pending' || here || today.stop.receipt) && <Receipt d={today} outlet={data.outlet.id} onDone={(m) => { setMsg(m); void load(); }} />}
         {today && today.stop.status === 'pending' && !here && !today.stop.receipt && <button className="btn btn-p btn-lg" onClick={() => setHere(true)}>The truck is here</button>}

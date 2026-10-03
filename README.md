@@ -1,5 +1,7 @@
 # Waypoint Dispatch
 
+[![CI](https://github.com/Amri2002/ApexIntelligent_WaypointDispatch/actions/workflows/ci.yml/badge.svg)](https://github.com/Amri2002/ApexIntelligent_WaypointDispatch/actions/workflows/ci.yml)
+
 **Team Apex Intelligent** · Rootcode Tech-Triathlon 2026 · Hackathon
 
 Waypoint Dispatch plans next-day deliveries for both depots and runs the day through to proof of delivery. The planning engine respects capacity, temperature, access, delivery windows and fuel. On days when the fleet is short, it defers orders with a reason and a rank, so the dispatcher can confirm the decisions and every store hears about them before cutoff. Loaders and drivers keep working without signal, and their records sync once the phone reconnects.
@@ -42,7 +44,7 @@ cp ../.env.example .env.local      # point DATABASE_URL at your Postgres
 npm install
 npm run db:migrate                 # migrate + seed (npm run db:reset to wipe and re-seed)
 npm run dev                        # http://localhost:3000
-npm test                           # engine unit tests (vitest)
+npm test                           # unit tests (vitest); GitHub Actions also runs them, the typecheck and the build on every push
 BASE_URL=http://localhost:3000 node e2e/walkthrough.mjs   # full 4-role walkthrough (Playwright)
 ```
 
@@ -96,7 +98,10 @@ Use a desktop window for the dispatcher. For the other roles, use a phone or a n
 14. Dispatcher **Forecast**: weekly chilled demand as a share of reefer capacity for the next 10 weeks, with festival weeks marked and a workshop-timing recommendation.
 
 **The next run: closing the loop**
-15. As the dispatcher, switch the day at the top right from **Fri, 10 Apr** to **Sat, 11 Apr · next run**. The **Orders** queue now holds the orders deferred in step 4, which go first, plus the order the store placed in step 13. Press **Build plan for Sat, 11 Apr**. The same engine and rules apply, and the 5 reefers are still in the workshop, so the plan shows honestly which deferred orders still cannot fit. Deferring one of them a second time requires a written note. (Only the dispatcher screens switch days; the loader, driver and store apps stay on 10 April.)
+**When something breaks: a truck breaks down after publishing**
+15. As the dispatcher, open **Plan**, choose **Fri, 10 Apr** and **Peliyagoda**, click the **VEH007** trip bar, then press **Report VEH007 broken down**. The engine re-homes its orders onto vehicles that have not started loading, keeping their existing stops and all nine rules. It moves the two dry orders to ordinary trucks and defers the two chilled orders, because no reefer has room left. The dock, the **Live run** feed and every affected store are told at once. As the **Store manager**, pick **OUT068** in the outlet picker to see *"Your delivery now comes on VEH030"*.
+
+16. As the dispatcher, switch the day at the top right from **Fri, 10 Apr** to **Sat, 11 Apr · next run**. The **Orders** queue now holds the orders deferred in step 4, which go first, plus the order the store placed in step 13. Press **Build plan for Sat, 11 Apr**. The same engine and rules apply, and the 5 reefers are still in the workshop, so the plan shows honestly which deferred orders still cannot fit. Deferring one of them a second time requires a written note. (Only the dispatcher screens switch days; the loader, driver and store apps stay on 10 April.)
 
 ## 4. How it works
 
@@ -109,14 +114,14 @@ Stack: Next.js 15 (App Router, React 19, TypeScript) · PostgreSQL 16 with Drizz
 
 ```
 ApexIntelligent_WaypointDispatch/
-├── docker-compose.yml   Dockerfile   render.yaml   .env.example
+├── docker-compose.yml   Dockerfile   render.yaml   .env.example   .github/workflows/ci.yml
 ├── data/                shared datasets + files derived from them (seeded on first start)
 ├── scripts/             build_demo_data.py: rebuilds the derived files in data/ from the raw datasets
 ├── docs/                architecture, data model, planning engine, AI disclosure
 └── web/
     ├── drizzle/         SQL migrations
     ├── scripts/         migrate.mjs (migrate + seed)
-    ├── e2e/             walkthrough.mjs (Playwright, all four roles)
+    ├── e2e/             walkthrough.mjs (Playwright, all four roles), breakdown.mjs
     └── src/
         ├── app/         dispatcher/ loader/ driver/ store/ login/ api/
         ├── components/
@@ -155,7 +160,7 @@ Everything the app shows is either one of the organisers' files, used unchanged,
 
 **Still illustrative:** the four users, the product list on the store's order screen (the datasets have order sizes, not products), and which orders are marked as phone orders.
 
-**Known limitations:** the loader, driver and store apps run the demo day only; the dispatcher can also plan the next run. Service time is the official allowance scaled by order size, not a trained model (that is the Datathon's Task 1). The forecast is a one-off batch run rather than a scheduled job.
+**Known limitations:** the loader, driver and store apps run the demo day only; the dispatcher can also plan the next run. After publishing, the only change the dispatcher can make is to report a breakdown; other edits need the draft. Service time is the official allowance scaled by order size, not a trained model (that is the Datathon's Task 1). The forecast is a one-off batch run rather than a scheduled job.
 
 ## 7. Data confidentiality
 

@@ -42,7 +42,6 @@ export default function OrderPage() {
       <header className="appbar">
         <Link href="/store" aria-label="Back" style={{ width: 44, height: 44, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'inherit', marginLeft: -10 }}><Icon name="back" size={20} /></Link>
         <div className="col" style={{ gap: 0 }}><span className="lbl">Waypoint {brand} · <span className="mono">{outlet}</span></span><span className="h" style={{ fontSize: 18, fontWeight: 700 }}>Place order</span></div>
-        <span className="muted right" style={{ fontSize: 13, fontWeight: 600 }}>EN · தமிழ்</span>
       </header>
       <main className="pbody">
         <div className="banner" style={{ background: 'var(--ink)', color: '#fff' }}><Icon name="clock" size={24} style={{ color: 'var(--brand)' }} /><div style={{ fontSize: 14 }}><b>Orders close at 16:00 · {left}</b><div style={{ color: '#D9D7D0', fontSize: 13 }}>Orders after 16:00 go on the following run</div></div></div>

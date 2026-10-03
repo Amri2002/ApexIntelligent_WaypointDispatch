@@ -242,7 +242,7 @@ export async function liveBoard(depot?: string) {
       return { kind: 'offline', rank: 2, title: `${t.vehicleId} · ${t.district}`, at: t.lastSyncAt, body: `No signal since ${t.lastSyncAt ? new Date(t.lastSyncAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Colombo' }) : 'departure'}. Last record: stop ${done.length} of ${t.stops.length}. Predicted next: ${next?.outletId ?? 'return to depot'}. Records are saving on the driver's phone.`, tripId: t.id };
     }),
     ...trips.filter((t) => t.status === 'departed' && !t.isOffline).flatMap((t) => t.stops.filter((x) => x.status === 'pending' && x.lateRisk > 0.3).map((x) => ({ kind: 'late', rank: 1, title: `${t.vehicleId} → ${x.outletId}`, at: null, body: `Late risk ${Math.round(x.lateRisk * 100)}%: planned ${String(Math.floor(x.etaMin / 60)).padStart(2, '0')}:${String(x.etaMin % 60).padStart(2, '0')}, window closes ${x.outlet.windowClose}.`, tripId: t.id }))),
-    ...notes.filter((n) => ['flag', 'issue', 'store_reply'].includes(n.kind)).map((n) => ({ kind: n.kind, rank: n.kind === 'issue' ? 1 : 3, title: n.title, at: n.createdAt, body: n.body, tripId: null })),
+    ...notes.filter((n) => ['flag', 'issue', 'store_reply', 'breakdown'].includes(n.kind)).map((n) => ({ kind: n.kind, rank: n.kind === 'issue' || n.kind === 'breakdown' ? 1 : 3, title: n.title, at: n.createdAt, body: n.body, tripId: null })),
     ...pendingRequests.map((d) => ({ kind: 'awaiting', rank: 4, title: 'Waiting for a store reply', at: d.decidedAt, body: `Asked the store to accept a later window for order ${d.orderId.slice(0, 8)}.`, tripId: null })),
   ].sort((a, b) => a.rank - b.rank);
   return {
