@@ -33,6 +33,21 @@ export default function PlanPage() {
     setBusy(false);
   };
 
+  const breakdown = async (vehicleId: string) => {
+    if (!view?.plan) return;
+    if (!confirm(`Report ${vehicleId} as broken down? Its trips that have not left the depot will be re-planned onto other vehicles, and anything that cannot move is deferred. The dock and the affected stores are told straight away.`)) return;
+    setBusy(true);
+    try {
+      const r = await api<{ view: PlanView; summary: { moved: { ref: string; vehicleId: string }[]; deferred: { ref: string }[] } }>(`/api/plans/${view.plan.id}/breakdown`, { json: { vehicleId } });
+      setView(r.view);
+      const m = r.summary.moved, d = r.summary.deferred;
+      setToast({ msg: `${vehicleId} out of service. ${m.length} ${m.length === 1 ? 'order' : 'orders'} moved${m.length ? ` (${[...new Set(m.map((x) => x.vehicleId))].join(', ')})` : ''}, ${d.length} deferred. Dock and stores notified.` });
+      const first = r.view.trips.find((t) => m.some((x) => x.vehicleId === t.vehicleId));
+      setSel(first?.id ?? r.view.trips[0]?.id ?? null);
+    } catch (e) { setToast({ msg: (e as ApiError).message, bad: true }); }
+    setBusy(false);
+  };
+
   const trips = view?.trips ?? [];
   const vehiclesWithTrips = useMemo(() => [...new Set(trips.map((t) => t.vehicleId))], [trips]);
   const trip = trips.find((t) => t.id === sel);
@@ -97,7 +112,7 @@ export default function PlanPage() {
               <div className="muted" style={{ fontSize: 12, paddingTop: 8 }}>{idle.length} available vehicles idle{idle.length ? ` (${idle.slice(0, 6).map((v) => v.id).join(', ')}${idle.length > 6 ? '…' : ''})` : ''} · {t!.workshop.length} in workshop</div>
             </div>
           </section>
-          {trip && <TripPanel trip={trip} view={view} onMove={(o) => setMoving(o)} busy={busy} published={published} onUnplace={(id) => move(id, null)} />}
+          {trip && <TripPanel trip={trip} view={view} onMove={(o) => setMoving(o)} busy={busy} published={published} onUnplace={(id) => move(id, null)} onBreakdown={breakdown} />}
         </div>
       )}
       {moving && view && (
@@ -130,7 +145,7 @@ function Meter({ label, value, frac, color, bad }: { label: string; value: strin
   );
 }
 
-function TripPanel({ trip, view, onMove, onUnplace, busy, published }: { trip: PlanView['trips'][number]; view: PlanView; onMove: (o: { orderId: string; ref: string }) => void; onUnplace: (id: string) => void; busy: boolean; published: boolean }) {
+function TripPanel({ trip, view, onMove, onUnplace, onBreakdown, busy, published }: { trip: PlanView['trips'][number]; view: PlanView; onMove: (o: { orderId: string; ref: string }) => void; onUnplace: (id: string) => void; onBreakdown: (vehicleId: string) => void; busy: boolean; published: boolean }) {
   const v = trip.vehicle;
   const vTrips = view.trips.filter((x) => x.vehicleId === v.id);
   const freshMin = vTrips.filter((x) => x.brand === 'Fresh').reduce((a, x) => a + x.tripMinutes, 0);
@@ -180,6 +195,13 @@ function TripPanel({ trip, view, onMove, onUnplace, busy, published }: { trip: P
           </div>
         ))}
       </div>}
+      {published && ['planned', 'loading', 'sealed'].includes(trip.status) && (
+        <div style={{ borderTop: '1px solid var(--line-soft)', paddingTop: 10 }} className="col">
+          <div className="lbl">If something goes wrong</div>
+          <button className="btn btn-s" style={{ borderColor: '#E8A79F', color: 'var(--bad)' }} disabled={busy} onClick={() => onBreakdown(v.id)}><Icon name="alert" size={15} />Report {v.id} broken down</button>
+          <span className="muted" style={{ fontSize: 11.5 }}>Re-plans its trips that have not left yet onto vehicles still at the depot, with the same rules.</span>
+        </div>
+      )}
     </aside>
   );
 }

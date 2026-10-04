@@ -6,6 +6,7 @@ import { Engine, planDay, type Draft } from './engine/plan';
 import type { EngineInput, EOrder, PlannedTrip } from './engine/types';
 import { HttpError } from './auth';
 import { prettyDate } from './time';
+import { fmt } from './engine/plan';
 
 export const REASON_LABEL: Record<string, string> = {
   REEFER_CAPACITY: 'Refrigerated capacity',
@@ -15,6 +16,7 @@ export const REASON_LABEL: Record<string, string> = {
   FLEET_CAPACITY: 'Fleet capacity',
   OVERSIZE: 'Larger than any vehicle',
   MANUAL: 'Dispatcher decision',
+  BREAKDOWN: 'Vehicle breakdown',
 };
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
@@ -320,6 +322,76 @@ export async function moveOrder(planId: string, orderId: string, target: { vehic
     await tx.update(s.plans).set({ updatedAt: new Date() }).where(eq(s.plans.id, planId));
   });
   return getPlanView(plan.depot, plan.date);
+}
+
+/**
+ * A vehicle breaks down after the plan is published. Its trips that have not left the depot are
+ * taken off it; every displaced order is re-homed by the engine onto a vehicle that has not
+ * started loading yet (keeping that vehicle's existing stops and every rule). Whatever fits
+ * nowhere is deferred to the next run with the reason. The dock, the dispatcher's feed and every
+ * affected store are told straight away.
+ */
+export async function reportBreakdown(planId: string, vehicleId: string, user: string) {
+  const plan = (await db.select().from(s.plans).where(eq(s.plans.id, planId)))[0];
+  if (!plan) throw new HttpError(404, 'Plan not found');
+  if (plan.status !== 'published') throw new HttpError(409, 'This plan is still a draft: move the orders or re-run the planner instead');
+  const view = await getPlanView(plan.depot, plan.date);
+  const lostTrips = view.trips.filter((t) => t.vehicleId === vehicleId && ['planned', 'loading', 'sealed'].includes(t.status));
+  if (!lostTrips.length) throw new HttpError(409, `${vehicleId} has no trips left at the depot to re-plan`);
+
+  await db.update(s.vehicles).set({ status: 'in_workshop' }).where(eq(s.vehicles.id, vehicleId));
+  const input = await engineInput(plan.depot, plan.date);
+  const engine = new Engine(input);
+  // Only vehicles that have not started loading can take extra orders; others keep their trips as they are.
+  const busy = new Set(view.trips.filter((t) => t.status !== 'planned').map((t) => t.vehicleId));
+  const usable = input.vehicles.filter((v) => v.depot === plan.depot && v.status === 'available' && !busy.has(v.id));
+  const drafts = new Map<string, Draft[]>();
+  for (const v of usable) { const d = draftsFor(view, v.id); if (d.length) drafts.set(v.id, d); }
+  const displaced = lostTrips.flatMap((t) => t.stops.flatMap((x) => x.orders.map(toEOrder)));
+  const res = engine.reassign(displaced, usable, drafts);
+
+  const changed = [...new Set(res.placed.map((p) => p.vehicleId))];
+  const rescheduled: PlannedTrip[] = [];
+  for (const vid of changed) {
+    const out = engine.scheduleVehicle(usable.find((v) => v.id === vid)!, res.drafts.get(vid)!);
+    if (!out.trips) throw new HttpError(500, `Re-planning failed for ${vid}: ${out.violation?.message}`);
+    rescheduled.push(...out.trips);
+  }
+  const toDate = await nextOperatingDay(plan.date);
+  const orderRef = new Map(displaced.map((o) => [o.id, o]));
+  const moved = res.placed.map((p) => {
+    const trip = rescheduled.find((t) => t.stops.some((x) => x.orderIds.includes(p.orderId)))!;
+    const stop = trip.stops.find((x) => x.orderIds.includes(p.orderId))!;
+    return { order: orderRef.get(p.orderId)!, vehicleId: p.vehicleId, tripNo: trip.tripNo, etaMin: stop.etaMin };
+  });
+
+  await db.transaction(async (tx) => {
+    const replaced = view.trips.filter((t) => lostTrips.includes(t) || (changed.includes(t.vehicleId) && t.status === 'planned'));
+    const orderIds = replaced.flatMap((t) => t.stops.flatMap((x) => x.orders.map((o) => o.id)));
+    if (orderIds.length) await tx.update(s.orders).set({ stopId: null, status: 'confirmed' }).where(inArray(s.orders.id, orderIds));
+    await tx.delete(s.trips).where(inArray(s.trips.id, replaced.map((t) => t.id)));
+    await writeTrips(tx, planId, rescheduled);
+    for (const [i, u] of res.unplaced.entries()) {
+      await tx.insert(s.deferrals).values({ orderId: u.order.id, fromDate: plan.date, toDate, reasonCode: 'BREAKDOWN', reasonText: `${vehicleId} broke down. ${u.text}`, rank: 200 + i, status: 'proposed' });
+    }
+    const movedText = moved.length ? `${moved.length} ${moved.length === 1 ? 'order' : 'orders'} moved (${moved.map((m) => `${m.order.ref} → ${m.vehicleId}`).join(', ')})` : 'No order could be moved';
+    const deferredText = res.unplaced.length ? `; ${res.unplaced.length} deferred to ${prettyDate(toDate)} (${res.unplaced.map((u) => u.order.ref).join(', ')})` : '; nothing deferred';
+    await tx.insert(s.notifications).values([
+      { audience: 'DISPATCHER', kind: 'breakdown', refId: planId, title: `${vehicleId} broke down · plan repaired`, body: movedText + deferredText + '.' },
+      { audience: `LOADER:${plan.depot}`, kind: 'plan_change', refId: planId, title: `Plan changed: ${vehicleId} broke down`, body: `Do not load ${vehicleId}. ${movedText}${deferredText}. Your list below is already up to date.` },
+      ...moved.map((m) => ({ audience: `OUTLET:${m.order.outletId}`, kind: 'plan_change', refId: m.order.id, title: `Your delivery now comes on ${m.vehicleId}`, body: `${vehicleId} broke down. Order ${m.order.ref} moved to ${m.vehicleId}, trip ${m.tripNo}, planned about ${fmt(m.etaMin)}. Nothing for you to do.` })),
+    ]);
+    await tx.update(s.plans).set({ updatedAt: new Date() }).where(eq(s.plans.id, planId));
+  });
+
+  // Breakdown deferrals are decided on the spot (the plan is already running) and each store is told.
+  const after = await getPlanView(plan.depot, plan.date);
+  const rows = after.deferred.filter((d) => d.reasonCode === 'BREAKDOWN' && d.status === 'proposed');
+  if (rows.length) await db.transaction(async (tx) => { for (const r of rows) await confirmOne(tx, r, `Vehicle breakdown: ${vehicleId}`, 'Decided during the run after a breakdown', user); });
+  return {
+    view: await getPlanView(plan.depot, plan.date),
+    summary: { vehicleId, moved: moved.map((m) => ({ ref: m.order.ref, outletId: m.order.outletId, vehicleId: m.vehicleId, etaMin: m.etaMin })), deferred: res.unplaced.map((u) => ({ ref: u.order.ref, outletId: u.order.outletId, reason: u.text })), toDate },
+  };
 }
 
 /** Splits an order that is larger than any vehicle into two loads, then re-plans the draft. */

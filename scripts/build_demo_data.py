@@ -139,6 +139,13 @@ def main():
     q.columns = ["p20_min", "p50_min", "p80_min"]
     q.reset_index().to_csv(OUT / "arrival_delay_model.csv", index=False)
 
+    # ---- Style weekly schedule -----------------------------------------------------------
+    # The booklet: "Style orders weekly for a scheduled delivery day". In the history every Style
+    # outlet's deliveries run on one weekday; record it so the store app can show it.
+    style = hist[(hist.brand == "Style") & (hist.dispatch_status == "attempted")]
+    sched = style.groupby("outlet_id").dispatch_date.agg(lambda d: d.dt.day_name().mode().iloc[0])
+    sched.rename("delivery_weekday").reset_index().to_csv(OUT / "style_schedule.csv", index=False)
+
     print("fuel used: median", round((fuel.fuel_used_l / vehicles.weekly_fuel_quota_l.values).median() * 100), "% of quota")
     print("wrote", OUT)
 

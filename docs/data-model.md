@@ -36,7 +36,7 @@ erDiagram
 
 | Table | Source | Notes |
 |---|---|---|
-| `outlets` | `outlets.csv` | Brand, district, depot, dock type, `van_only` parking, delivery window (mall windows applied). |
+| `outlets` | `outlets.csv` + `style_schedule.csv` | Brand, district, depot, dock type, `van_only` parking, delivery window (mall windows applied).. Style outlets also carry `delivery_weekday`, their weekly delivery day from the history. |
 | `vehicles` | `vehicles.csv` + `demo_fleet_status.csv` | Capacity by weight and volume, reefer or ambient, truck or van, km/L, weekly fuel quota, fuel used Mon–Thu (`fuel_used_week.csv`, from km actually driven the same week last year), and workshop status on the demo day. Published plans earlier in the same ISO week add their trips' fuel when a later day is planned. |
 | `district_travel` | `district_travel.csv` | Depot-to-district and inter-stop distance and free-flow time. Used by the Task 2B trip-time formula. |
 | `service_allowance` | `service_allowance.csv` | Handling minutes by brand × dock type. |

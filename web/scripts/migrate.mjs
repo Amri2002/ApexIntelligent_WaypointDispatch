@@ -15,6 +15,7 @@ if (!url) { console.error('DATABASE_URL is not set'); process.exit(1); }
 let client;
 for (let i = 0; i < 30; i++) {
   client = new pg.Client({ connectionString: url });
+  client.on('error', (e) => console.error('[migrate] database connection error:', e.message));
   try { await client.connect(); break; } catch (e) {
     await client.end().catch(() => {});
     if (i === 29) throw e;

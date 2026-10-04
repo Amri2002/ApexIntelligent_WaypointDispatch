@@ -70,6 +70,10 @@ flowchart LR
 * Each API handler checks the role (`requireRole`). With `DEMO_MODE=false`, the server also holds each account to its own data (`ownOutlet`, `ownVehicle`, `ownDepot` in `lib/auth.ts`). A store manager sees and acts for their own outlet only, a driver for their own vehicle's trips, and a loader for their own depot. Field updates for someone else's trip are rejected during sync. `DEMO_MODE` defaults to true so the "(demo)" pickers can show every case during judging.
 * Secrets come from the environment (`AUTH_SECRET`, `DATABASE_URL`). See `.env.example`.
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request: `npm ci`, the TypeScript typecheck, the unit tests (engine, independent rule checker, breakdown repair, history-fitted models) and a production build.
+
 ## Deployment
 
 `docker compose up` builds the web image and starts Postgres. The web container runs `node scripts/migrate.mjs` (migrate, then seed) before `next start`. `render.yaml` deploys the same Docker image as a Render web service, connected to a Neon Postgres database through `DATABASE_URL`.

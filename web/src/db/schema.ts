@@ -27,6 +27,8 @@ export const outlets = pgTable('outlets', {
   dockType: text('dock_type').notNull(),
   parkingConstraint: text('parking_constraint').notNull(),
   mallWindow: text('mall_window'),
+  /** Style outlets: the weekday their weekly delivery runs (from the delivery history). Null for Fresh and Tech. */
+  deliveryWeekday: text('delivery_weekday'),
   windowOpen: text('window_open').notNull(),
   windowClose: text('window_close').notNull(),
 });

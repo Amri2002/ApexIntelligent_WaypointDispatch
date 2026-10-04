@@ -92,7 +92,7 @@ export interface PlannedTrip {
   stops: PlannedStop[];
 }
 
-export type DeferReason = 'OVERSIZE' | 'REEFER_CAPACITY' | 'VAN_CAPACITY' | 'WINDOW' | 'FUEL' | 'FLEET_CAPACITY';
+export type DeferReason = 'OVERSIZE' | 'REEFER_CAPACITY' | 'VAN_CAPACITY' | 'WINDOW' | 'FUEL' | 'FLEET_CAPACITY' | 'BREAKDOWN';
 
 export interface DeferredOrder {
   orderId: string;

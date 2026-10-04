@@ -304,6 +304,25 @@ export class Engine {
     };
   }
 
+  /**
+   * Re-homes orders after a vehicle drops out of a published plan (e.g. a breakdown). The other
+   * vehicles keep their existing trips; each displaced order, in priority order, goes to the
+   * cheapest spot that still passes every rule. Orders that fit nowhere come back with the rule
+   * that blocked them. `drafts` holds the current trips of the vehicles allowed to take orders.
+   */
+  reassign(orders: EOrder[], vehicles: EVehicle[], drafts: Map<string, Draft[]>) {
+    const next = new Map(drafts);
+    const placed: { orderId: string; vehicleId: string }[] = [];
+    const unplaced: { order: EOrder; reason: DeferReason; text: string }[] = [];
+    for (const order of this.sortOrders(orders)) {
+      const failures: Violation[] = [];
+      const best = this.bestPlacement(order, vehicles, next, failures);
+      if (best) { next.set(best.vid, best.drafts); placed.push({ orderId: order.id, vehicleId: best.vid }); }
+      else unplaced.push({ order, ...this.diagnose(order, vehicles, failures) });
+    }
+    return { drafts: next, placed, unplaced };
+  }
+
   /** Validates a manually edited trip (used when the dispatcher moves or places an order). */
   validate(v: EVehicle, allDrafts: Draft[]): Violation[] {
     const violations: Violation[] = [];

@@ -95,3 +95,38 @@ describe('planning engine on the demo day', () => {
     expect(v.length).toBeGreaterThan(0);
   });
 });
+
+describe('re-planning after a breakdown', () => {
+  for (const broken of ['VEH007', 'VEH023']) {
+    it(`re-homes ${broken}'s orders without breaking any rule`, () => {
+      const input = inputFromCsv(DATA, 'Peliyagoda');
+      const before = planDay(input);
+      const lost = before.trips.filter((t) => t.vehicleId === broken);
+      expect(lost.length).toBeGreaterThan(0);
+      const orderById = new Map(input.orders.map((o) => [o.id, o]));
+      const displaced = lost.flatMap((t) => t.stops.flatMap((s) => s.orderIds)).map((id) => orderById.get(id)!);
+
+      // The vehicle is now out of service; everyone else keeps their trips.
+      const after: EngineInput = { ...input, vehicles: input.vehicles.map((v) => (v.id === broken ? { ...v, status: 'in_workshop' } : v)) };
+      const engine = new Engine(after);
+      const drafts = new Map<string, { brand: string; district: string; orders: typeof displaced }[]>();
+      for (const t of before.trips.filter((x) => x.vehicleId !== broken)) {
+        drafts.set(t.vehicleId, [...(drafts.get(t.vehicleId) ?? []), { brand: t.brand, district: t.district, orders: t.stops.flatMap((s) => s.orderIds.map((id) => orderById.get(id)!)) }]);
+      }
+      const usable = after.vehicles.filter((v) => v.depot === 'Peliyagoda' && v.status === 'available');
+      const res = engine.reassign(displaced, usable, drafts);
+
+      expect(res.placed.length + res.unplaced.length).toBe(displaced.length);
+      expect(res.placed.every((p) => p.vehicleId !== broken)).toBe(true);
+
+      // Rebuild the whole day and run the independent checker over it.
+      const trips = [...res.drafts].flatMap(([vid, ds]) => {
+        const sched = engine.scheduleVehicle(usable.find((v) => v.id === vid)!, ds);
+        expect(sched.violation).toBeUndefined();
+        return sched.trips!;
+      });
+      const deferred = [...before.deferred, ...res.unplaced.map((u, i) => ({ orderId: u.order.id, reason: u.reason, reasonText: u.text, rank: 100 + i }))];
+      expect(independentCheck(after, { ...before, trips, deferred })).toEqual([]);
+    });
+  }
+});
