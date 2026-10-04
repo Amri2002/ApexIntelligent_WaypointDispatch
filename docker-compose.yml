@@ -5,7 +5,8 @@ services:
       POSTGRES_USER: waypoint
       POSTGRES_PASSWORD: waypoint
       POSTGRES_DB: waypoint
-    ports: ["5432:5432"]
+    # No published port: the web container reaches the database on the internal network,
+    # so a Postgres already running on the judge's machine cannot clash with it.
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U waypoint -d waypoint"]
