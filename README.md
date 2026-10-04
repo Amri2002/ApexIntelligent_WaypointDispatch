@@ -110,7 +110,8 @@ Stack: Next.js 15 (App Router, React 19, TypeScript) · PostgreSQL 16 with Drizz
 ```
 ApexIntelligent_WaypointDispatch/
 ├── docker-compose.yml   Dockerfile   render.yaml   .env.example
-├── data/                shared datasets + demo-day files (seeded on first start)
+├── data/                shared datasets + files derived from them (seeded on first start)
+├── scripts/             build_demo_data.py: rebuilds the derived files in data/ from the raw datasets
 ├── docs/                architecture, data model, planning engine, AI disclosure
 └── web/
     ├── drizzle/         SQL migrations
@@ -135,8 +136,27 @@ The Designathon prototype was our starting point. Here is where the build differ
 | Forecast for the next 8 weeks | 10 weeks, from a seasonal × recent-trend weekly model | The Datathon model is due later and will replace it behind the same API. |
 | Offline shown by losing coverage | Real offline **and** a **Simulate no signal** switch in the account menu | Judges can test recovery without touching device settings. Both paths use the same outbox. |
 | **Escalate to ops manager** on the deferral screen | Not built | There is no ops-manager role in the brief's four roles. Every decision is still logged with who, when and why. |
-| One driver and one store | **Vehicle (demo)** and **Outlet (demo)** pickers, plus **Reset demo day** | They let one set of seeded accounts show every case, including a deferred store. |
+| One driver and one store | **Vehicle (demo)** and **Outlet (demo)** pickers, plus **Reset demo day** | They let one set of seeded accounts show every case, including a deferred store. With `DEMO_MODE=false` the pickers disappear and the server holds every account to its own outlet, vehicle and depot. |
+| A single delivery day | A **day switch** for the dispatcher: the demo day and the **next run** | Orders deferred today and new store orders land on the next run, which can be planned with the same engine. Fuel used by published plans earlier in the week counts against the weekly quota. |
 
-## 6. Data confidentiality
+## 6. Where the numbers come from
+
+Everything the app shows is either one of the organisers' files, used unchanged, or computed from them by `scripts/build_demo_data.py`. Nothing is typed in by hand. Run it with `python scripts/build_demo_data.py <folder with the unzipped General, Test and Training Data>`; it needs pandas.
+
+| File in `data/` | Source |
+|---|---|
+| `outlets`, `vehicles`, `calendar`, `district_travel`, `service_allowance`, `traffic_speed` | General Data, unchanged |
+| `demo_day_orders.csv` | Peliyagoda: Task 2B scenario S1 as given. Kandy: the real orders of 11 Apr 2025 from `deliveries_train.csv` |
+| `demo_fleet_status.csv` | Task 2B scenario S1 fleet status as given |
+| `fuel_used_week.csv` | Fuel each vehicle had already used before Friday: km actually driven Mon–Thu of the same week a year earlier (`route_legs_train.csv`, plus the drive back to the depot) ÷ km per litre |
+| `late_risk_model.csv` | Chance of arriving after the window closes, given the minutes to spare at the planned ETA. A logistic model fitted on 91,894 historical arrivals, separately for dry and monsoon days |
+| `arrival_delay_model.csv` | How far real arrivals ran behind the planned ETA (20th, 50th and 80th percentile) by season and stop position. Used for the store's "likely between" time |
+| `forecast_weekly.csv` | The same week last year × the year-on-year trend of the last 8 weeks of order history |
+
+**Still illustrative:** the four users, the product list on the store's order screen (the datasets have order sizes, not products), and which orders are marked as phone orders.
+
+**Known limitations:** the loader, driver and store apps run the demo day only; the dispatcher can also plan the next run. Service time is the official allowance scaled by order size, not a trained model (that is the Datathon's Task 1). The forecast is a one-off batch run rather than a scheduled job.
+
+## 7. Data confidentiality
 
 `data/` contains the competition datasets, which the organisers' rules forbid sharing publicly. **Keep this repository private** and grant access only to the organisers. The public deployment shows derived views to signed-in demo users only. It does not offer the raw files for download.

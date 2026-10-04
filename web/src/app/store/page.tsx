@@ -9,7 +9,7 @@ import { fmt, prettyDate, slTime } from '@/lib/time';
 
 interface Note { id: string; kind: string; title: string; body: string; createdAt: string; response: string | null }
 interface Ord { id: string; ref: string; temp: string; units: number; status: string; deliveryDate: string; stopId: string | null; volumeM3: number; createdAt: string }
-interface Delivery { trip: { id: string; vehicleId: string; tripNo: number; status: string; sealedAt: string | null; departedAt: string | null; lastSyncAt: string | null; isOffline: boolean; stopsTotal: number; stopsDone: number; flags: { id: string; qty: number; item: string; issueType: string }[] }; stop: { id: string; seq: number; etaMin: number; status: string; completedAt: string | null; receiverName: string | null; photo: string | null; deliveredUnits: number | null; units: number; chilledUnits: number; expectedUnits: number; lateRisk: number; receipt: { status: string; issueType: string | null; matchedFlagId: string | null } | null; orders: Ord[] } }
+interface Delivery { trip: { id: string; vehicleId: string; tripNo: number; status: string; sealedAt: string | null; departedAt: string | null; lastSyncAt: string | null; isOffline: boolean; stopsTotal: number; stopsDone: number; flags: { id: string; qty: number; item: string; issueType: string }[] }; stop: { id: string; seq: number; etaMin: number; status: string; completedAt: string | null; receiverName: string | null; photo: string | null; deliveredUnits: number | null; units: number; chilledUnits: number; expectedUnits: number; lateRisk: number; receipt: { status: string; issueType: string | null; matchedFlagId: string | null } | null; orders: Ord[] } ; arrival: { earliest: number; likely: number; latest: number } }
 interface Overview { outlet: { id: string; brand: string; district: string; windowOpen: string; windowClose: string; dockType: string }; date: string; nextDate: string; orders: Ord[]; deliveries: Delivery[]; notes: Note[]; outlets: { id: string; brand: string; district: string }[] }
 
 export default function StorePage() {
@@ -35,8 +35,10 @@ export default function StorePage() {
         <button className="right" onClick={logout} aria-label="Sign out" style={{ border: 0, background: 'transparent', cursor: 'pointer' }}><Icon name="logout" /></button>
       </header>
       <main className="pbody">
+        {data.outlets.length > 1 && (
         <label className="row" style={{ fontSize: 13 }}><span className="muted">Outlet (demo)</span>
           <select className="input" style={{ width: 'auto', height: 34 }} value={data.outlet.id} onChange={(e) => { setOutlet(e.target.value); localStorage.setItem('wp-store-outlet', e.target.value); }}>{data.outlets.map((o) => <option key={o.id} value={o.id}>{o.id} · {o.brand} · {o.district}</option>)}</select></label>
+        )}
 
         {requests.map((n) => <WindowRequest key={n.id} note={n} outlet={data.outlet.id} onDone={(m) => { setMsg(m); void load(); }} />)}
         {deferrals.map((n) => <DeferralNotice key={n.id} note={n} outlet={data.outlet.id} onDone={() => void load()} />)}
@@ -57,7 +59,8 @@ export default function StorePage() {
 
 function Arrival({ d, outlet }: { d: Delivery; outlet: Overview['outlet'] }) {
   const done = d.stop.status !== 'pending';
-  const range = Math.round(10 + d.stop.lateRisk * 30);
+  // Likely arrival = planned ETA + how late trucks have actually run at this stop position and season.
+  const a = d.arrival;
   const events = [
     { on: true, t: 'Order confirmed', at: '' },
     { on: !!d.trip.sealedAt, t: d.trip.flags.length ? `Loaded and sealed · ${d.trip.flags.reduce((a, f) => a + f.qty, 0)} short (flagged at the dock)` : 'Loaded and sealed · nothing short for you', at: slTime(d.trip.sealedAt) },
@@ -68,15 +71,21 @@ function Arrival({ d, outlet }: { d: Delivery; outlet: Overview['outlet'] }) {
     <>
       <div className="col" style={{ padding: 18, background: '#fff', border: '2px solid var(--ink)', borderRadius: 14, gap: 4 }}>
         <span className="lbl">{done ? 'Delivered to your' : 'Expected at your'} {outlet.dockType === 'rear_dock' ? 'rear dock' : outlet.dockType === 'mall_bay' ? 'mall bay' : 'street entrance'}</span>
-        <span className="h" style={{ fontSize: 44, fontWeight: 800, lineHeight: 1 }}>{done ? slTime(d.stop.completedAt) : fmt(d.stop.etaMin)}</span>
-        {!done && <span style={{ fontSize: 14 }}>Likely between <b>{fmt(d.stop.etaMin - 10)} and {fmt(d.stop.etaMin + range)}</b> · your window {outlet.windowOpen}–{outlet.windowClose}</span>}
+        <span className="h" style={{ fontSize: 44, fontWeight: 800, lineHeight: 1 }}>{done ? slTime(d.stop.completedAt) : fmt(a.likely)}</span>
+        {!done && <span style={{ fontSize: 14 }}>Likely between <b>{fmt(a.earliest)} and {fmt(a.latest)}</b> · planned {fmt(d.stop.etaMin)} · your window {outlet.windowOpen}–{outlet.windowClose}</span>}
         <span className="muted" style={{ fontSize: 13 }}>Stop {d.stop.seq} of {d.trip.stopsTotal} on {d.trip.vehicleId} · {d.stop.expectedUnits} units ({d.stop.chilledUnits} chilled)</span>
       </div>
-      {!done && <div className="blk" style={{ background: '#FFF8EC', borderColor: '#E8C98A', flexDirection: 'row', alignItems: 'flex-start' }}><Icon name="clock" style={{ color: 'var(--warn)' }} /><span style={{ fontSize: 14 }}><b>Receiving staff needed from {fmt(d.stop.etaMin - 15)}.</b> This updates as the truck reports in.</span></div>}
+      {!done && a.likely > Number(outlet.windowClose.slice(0, 2)) * 60 + Number(outlet.windowClose.slice(3, 5)) && (
+        <div className="blk" role="alert" style={{ background: 'var(--bad-bg)', borderColor: '#F0B9B2', flexDirection: 'row', alignItems: 'flex-start' }}>
+          <Icon name="alert" style={{ color: 'var(--bad)' }} />
+          <span style={{ fontSize: 14 }}><b>Likely after your window closes at {outlet.windowClose}.</b> On days like this, trucks at this point in the route usually run late. The dispatcher sees the same risk; please keep a receiver on until the truck arrives.</span>
+        </div>
+      )}
+      {!done && <div className="blk" style={{ background: '#FFF8EC', borderColor: '#E8C98A', flexDirection: 'row', alignItems: 'flex-start' }}><Icon name="clock" style={{ color: 'var(--warn)' }} /><span style={{ fontSize: 14 }}><b>Receiving staff needed from {fmt(a.earliest - 15)}.</b> This updates as the truck reports in.</span></div>}
       <div className="blk" style={{ gap: 0 }}>
         {events.map((e, i) => <div key={i} className="row" style={{ padding: '7px 0', alignItems: 'flex-start' }}><span className={`dot ${e.on ? '' : 'o'}`} /><span className="grow" style={{ fontSize: 14, color: e.on ? undefined : 'var(--muted)' }}>{e.t}</span><span className="muted" style={{ fontSize: 13 }}>{e.on ? e.at : ''}</span></div>)}
         {d.trip.isOffline && !done && <div className="row" style={{ padding: '7px 0', alignItems: 'flex-start' }}><span className="dot p" /><span className="grow" style={{ fontSize: 14 }}><span className="tag t-off">Low coverage</span><br />The truck is in an area without signal. Times since {slTime(d.trip.lastSyncAt)} are estimated from the plan.</span><span className="muted" style={{ fontSize: 13 }}>now</span></div>}
-        <div className="row" style={{ padding: '7px 0' }}><span className={`dot ${done ? '' : 'o'}`} /><b className="grow" style={{ fontSize: 14 }}>{done ? 'Delivered' : 'Arrives at your store'}</b><b>{done ? slTime(d.stop.completedAt) : `~${fmt(d.stop.etaMin)}`}</b></div>
+        <div className="row" style={{ padding: '7px 0' }}><span className={`dot ${done ? '' : 'o'}`} /><b className="grow" style={{ fontSize: 14 }}>{done ? 'Delivered' : 'Arrives at your store'}</b><b>{done ? slTime(d.stop.completedAt) : `~${fmt(a.likely)}`}</b></div>
       </div>
     </>
   );

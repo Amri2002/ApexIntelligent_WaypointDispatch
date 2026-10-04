@@ -30,9 +30,31 @@ async function plannableOrders(depot: string, date: string) {
   return db.select().from(s.orders).where(and(eq(s.orders.depot, depot), eq(s.orders.deliveryDate, date), inArray(s.orders.status, ['confirmed', 'planned'])));
 }
 
+/**
+ * Fuel already committed earlier in the same ISO week by published plans (e.g. Friday's run when
+ * planning Saturday). Added to each vehicle's running total so the weekly quota holds across days.
+ */
+export async function fuelCommittedBefore(date: string): Promise<Map<string, number>> {
+  const day = (await db.select().from(s.calendarDays).where(eq(s.calendarDays.date, date)))[0];
+  if (!day) return new Map();
+  const rows = await db.select({ vehicleId: s.trips.vehicleId, fuelL: s.trips.fuelL }).from(s.trips)
+    .innerJoin(s.plans, eq(s.trips.planId, s.plans.id))
+    .innerJoin(s.calendarDays, eq(s.calendarDays.date, s.plans.date))
+    .where(and(eq(s.plans.status, 'published'), sql`${s.plans.date} < ${date}`, eq(s.calendarDays.isoYear, day.isoYear), eq(s.calendarDays.isoWeek, day.isoWeek)));
+  const m = new Map<string, number>();
+  for (const r of rows) m.set(r.vehicleId, (m.get(r.vehicleId) ?? 0) + r.fuelL);
+  return m;
+}
+
+/** Vehicles with this week's fuel use brought up to date for the given plan date. */
+export async function vehiclesAsOf(date: string, where?: ReturnType<typeof eq>) {
+  const [vehicles, committed] = await Promise.all([where ? db.select().from(s.vehicles).where(where) : db.select().from(s.vehicles), fuelCommittedBefore(date)]);
+  return vehicles.map((v) => ({ ...v, fuelUsedWeekL: r1(v.fuelUsedWeekL + (committed.get(v.id) ?? 0)) }));
+}
+
 export async function engineInput(depot: string, date: string, extra: Partial<EngineInput> = {}): Promise<EngineInput> {
   const [outlets, vehicles, travel, service, speed, cal, orders] = await Promise.all([
-    db.select().from(s.outlets), db.select().from(s.vehicles), db.select().from(s.districtTravel), db.select().from(s.serviceAllowance), db.select().from(s.trafficSpeed),
+    db.select().from(s.outlets), vehiclesAsOf(date), db.select().from(s.districtTravel), db.select().from(s.serviceAllowance), db.select().from(s.trafficSpeed),
     db.select().from(s.calendarDays).where(eq(s.calendarDays.date, date)), plannableOrders(depot, date),
   ]);
   return {
@@ -101,7 +123,7 @@ export async function generatePlan(depot: string, date: string) {
 export async function getPlanView(depot: string, date: string) {
   const plan = await getPlanRow(depot, date);
   const [vehicles, outlets, allOrders, calendar] = await Promise.all([
-    db.select().from(s.vehicles).where(eq(s.vehicles.depot, depot)),
+    vehiclesAsOf(date, eq(s.vehicles.depot, depot)),
     db.select().from(s.outlets),
     db.select().from(s.orders).where(and(eq(s.orders.depot, depot), eq(s.orders.deliveryDate, date))),
     db.select().from(s.calendarDays).where(eq(s.calendarDays.date, date)),

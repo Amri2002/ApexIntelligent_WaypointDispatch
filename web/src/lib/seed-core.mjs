@@ -35,20 +35,25 @@ async function insert(client, table, cols, rows) {
   }
 }
 
-/** Fuel already used Mon–Thu before the plan day: 40–64% of the weekly quota, deterministic per vehicle. */
-function fuelUsed(id, quota) {
-  const n = parseInt(id.replace(/\D/g, ''), 10);
-  return Math.round(quota * (0.4 + ((n * 37) % 25) / 100));
+/**
+ * Fuel each vehicle had already used this week before the plan day. Built by
+ * scripts/build_demo_data.py from the km actually driven Mon–Thu of the same week last year
+ * (route_legs_train.csv). Vehicles that did not run that week start at 0.
+ */
+function fuelUsedByVehicle(dir) {
+  if (!fs.existsSync(path.join(dir, 'fuel_used_week.csv'))) return {};
+  return Object.fromEntries(readCsv(dir, 'fuel_used_week.csv').map((r) => [r.vehicle_id, +r.fuel_used_l]));
 }
 
 export async function seedReference(client, dir) {
   const outlets = readCsv(dir, 'outlets.csv');
   const vehicles = readCsv(dir, 'vehicles.csv');
   const fleet = Object.fromEntries(readCsv(dir, 'demo_fleet_status.csv').map((r) => [r.vehicle_id, r.status]));
+  const fuelUsed = fuelUsedByVehicle(dir);
   await insert(client, 'outlets', ['id', 'brand', 'district', 'depot', 'dock_type', 'parking_constraint', 'mall_window', 'window_open', 'window_close'],
     outlets.map((o) => [o.outlet_id, o.brand, o.district, o.depot, o.dock_type, o.parking_constraint, o.mall_window || null, o.window_open_time, o.window_close_time]));
   await insert(client, 'vehicles', ['id', 'type', 'temp', 'weight_cap_kg', 'volume_cap_m3', 'fuel_type', 'km_per_l', 'weekly_fuel_quota_l', 'fuel_used_week_l', 'depot', 'status'],
-    vehicles.map((v) => [v.vehicle_id, v.type, v.temp, +v.weight_cap_kg, +v.volume_cap_m3, v.fuel_type, +v.km_per_l, +v.weekly_fuel_quota_l, fuelUsed(v.vehicle_id, +v.weekly_fuel_quota_l), v.depot, fleet[v.vehicle_id] || 'available']));
+    vehicles.map((v) => [v.vehicle_id, v.type, v.temp, +v.weight_cap_kg, +v.volume_cap_m3, v.fuel_type, +v.km_per_l, +v.weekly_fuel_quota_l, fuelUsed[v.vehicle_id] ?? 0, v.depot, fleet[v.vehicle_id] || 'available']));
   await insert(client, 'district_travel', ['district', 'depot', 'road_class', 'free_flow_kmh', 'depot_to_district_km', 'depot_to_district_min', 'inter_stop_km', 'inter_stop_min'],
     readCsv(dir, 'district_travel.csv').map((t) => [t.district, t.depot, t.road_class, +t.free_flow_kmh, +t.depot_to_district_km, +t.depot_to_district_freeflow_min, +t.inter_stop_km, +t.inter_stop_freeflow_min]));
   await insert(client, 'service_allowance', ['brand', 'dock_type', 'minutes'],
@@ -77,7 +82,7 @@ export async function seedOperational(client, dir) {
   await insert(client, 'users', ['id', 'email', 'name', 'role', 'password_hash', 'depot', 'vehicle_id', 'outlet_id'], [
     [randomUUID(), 'dispatcher@waypoint.lk', 'Dilani Fernando', 'DISPATCHER', hash, 'Peliyagoda', null, null],
     [randomUUID(), 'loader@waypoint.lk', 'Ruwan Bandara', 'LOADER', hash, 'Kandy', null, null],
-    [randomUUID(), 'driver@waypoint.lk', 'Nuwan Jayasinghe', 'DRIVER', hash, 'Kandy', null, null],
+    [randomUUID(), 'driver@waypoint.lk', 'Nuwan Jayasinghe', 'DRIVER', hash, 'Kandy', 'VEH041', null],
     [randomUUID(), 'store@waypoint.lk', 'Fathima Rizna', 'STORE_MANAGER', hash, 'Kandy', null, 'OUT106'],
   ]);
 }
@@ -85,12 +90,14 @@ export async function seedOperational(client, dir) {
 export async function seedAll(client, { force = false } = {}) {
   const dir = resolveDataDir();
   const { rows: [o] } = await client.query('SELECT count(*)::int AS n FROM outlets');
-  if (o.n === 0) await seedReference(client, dir);
   const { rows: [u] } = await client.query('SELECT count(*)::int AS n FROM users');
-  if (u.n === 0 || force) {
+  if (o.n === 0 || u.n === 0 || force) {
     await client.query('BEGIN');
     try {
       await clearOperational(client);
+      // Reload the reference data too, so a forced reseed always matches the CSVs in data/.
+      await client.query('TRUNCATE outlets, vehicles, district_travel, service_allowance, traffic_speed, calendar_days, forecast_weeks CASCADE');
+      await seedReference(client, dir);
       await seedOperational(client, dir);
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK'); throw e; }

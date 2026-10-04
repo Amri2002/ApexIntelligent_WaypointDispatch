@@ -160,7 +160,7 @@ function TripPanel({ trip, view, onMove, onUnplace, busy, published }: { trip: P
           <tr key={s.id}><td>{s.seq}</td><td className="mono">{s.outlet.id}{s.orders.some((o) => o.deferredYesterday) && <Icon name="lock" size={13} style={{ color: 'var(--warn)', marginLeft: 3 }} />}</td><td>{s.outlet.windowOpen}–{s.outlet.windowClose}</td><td>{fmt(s.etaMin)}</td><td>{Math.round(s.predServiceMin)} m</td><td style={{ color: s.lateRisk > 0.3 ? 'var(--warn)' : undefined, fontWeight: s.lateRisk > 0.3 ? 700 : 400 }}>{Math.round(s.lateRisk * 100)}%</td></tr>
         ))}</tbody>
       </table>
-      <div className="muted" style={{ fontSize: 11.5 }}>Svc = predicted service minutes. Late = predicted chance of arriving after the window closes, using hourly traffic. Lock = deferred yesterday.</div>
+      <div className="muted" style={{ fontSize: 11.5 }}>Svc = predicted service minutes. Late = chance of arriving after the window closes, from a model fitted on 91,894 past arrivals (dry vs monsoon). Lock = deferred yesterday.</div>
       <div className="col" style={{ gap: 6 }}>
         <div className="row" style={{ justifyContent: 'space-between', fontSize: 12.5 }}><span>Volume</span><b>{trip.loadM3.toFixed(1)} / {v.volumeCapM3} m³</b></div>
         <div className="meter"><span style={{ width: `${(trip.loadM3 / v.volumeCapM3) * 100}%`, background: 'var(--chill)' }} /></div>
