@@ -62,7 +62,7 @@ flowchart LR
 4. **Idempotency.** `/api/sync` records each event id in `sync_events` (primary key) once the event has been handled. A second copy of an event (a retry after a dropped response, say) is acknowledged as `duplicate` without being applied again.
 5. **Conflict rules.** A stop is completed only once. The first completion to reach the server wins, and a later one comes back as `duplicate`. A flag the store raises about the same item as a loader flag is matched to it automatically.
 6. **Recovery report.** After a sync, the driver sees what was sent, what the server matched, and anything rejected. The dispatcher's live board shows when each trip last synced and flags trips that have been quiet for too long.
-7. **Demo control.** Judges can test all of this without turning Wi-Fi off. The account menu on the driver and loader screens has a **Simulate no signal** switch. It routes every write to the outbox exactly as a real network loss would.
+7. **Demo control.** Judges can test all of this without turning Wi-Fi off. Tapping the **Online** chip on the driver and loader screens opens a **Simulate no signal** switch. It routes every write to the outbox exactly as a real network loss would.
 
 ## Demo clock (story time)
 

@@ -19,11 +19,12 @@ export function FieldBar({ kicker, title, back, offlineTitle }: { kicker: string
         {back && <Link href={back} aria-label="Back" style={{ width: 44, height: 44, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'inherit', marginLeft: -10 }}><Icon name="back" size={20} /></Link>}
         <div className="col" style={{ gap: 0, minWidth: 0 }}><span className="lbl">{kicker}</span><span className="h" style={{ fontSize: 18, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</span></div>
         {now && <span className="mono right" title="Demo clock (story time)" style={{ fontSize: 12.5, opacity: 0.75 }}>{slTime(now.toISOString())}</span>}
-        <button onClick={() => setMenu(!menu)} aria-expanded={menu} aria-label="Connection and account" style={{ border: 0, background: 'transparent', cursor: 'pointer', padding: 0, marginLeft: now ? 8 : 'auto' }}>
+        <button onClick={() => setMenu(!menu)} aria-expanded={menu} aria-label="Connection status and Simulate no signal" style={{ border: 0, background: 'transparent', cursor: 'pointer', padding: 0, marginLeft: now ? 8 : 'auto' }}>
           {online
             ? <span className="tag t-ok"><Icon name={pending.length ? 'sync' : 'check'} size={13} />{pending.length ? `Sending ${pending.length}` : 'Online'}</span>
             : <span className="tag" style={{ background: dark ? '#fff' : 'var(--off-bg)', color: 'var(--off)' }}><Icon name="wifiOff" size={13} />No signal{pending.length ? ` · ${pending.length} saved` : ''}</span>}
         </button>
+        <button onClick={logout} aria-label="Sign out" title="Sign out" style={{ border: 0, background: 'transparent', cursor: 'pointer', padding: 0, marginLeft: 10, display: 'inline-flex', color: 'inherit' }}><Icon name="logout" /></button>
       </header>
       {menu && (
         <div className="card col" style={{ position: 'sticky', top: 60, zIndex: 6, margin: '0 12px', padding: 14, gap: 10, boxShadow: '0 10px 30px rgba(0,0,0,.12)' }}>

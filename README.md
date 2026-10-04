@@ -68,7 +68,18 @@ All accounts use the password **`Waypoint@2026`**. The login page also has one-c
 
 The demo day is **Friday 10 April 2026**, three days before New Year. Peliyagoda has 5 of its 9 refrigerated vehicles in the workshop, and chilled demand is 2.1× what one wave of the remaining reefers can carry. Kandy has a normal day.
 
-**The demo clock.** The app does not use today's date. It runs on a shared *story time* that starts at **Thu 9 Apr 2026, 21:00** (the evening before the demo day) and moves forward in real time. Field actions move it to the moment they would really happen: sealing a load sets it to 40 minutes before departure, **Start trip** to the planned start, and each stop to its planned arrival (or later, if the clock is already past it). Every timestamp, notice and countdown uses story time. The dispatcher sidebar shows the clock with **+15m**, **+1 h** and **Set…**, so you can skip ahead or make a truck run late. The clock never goes backwards. With `DEMO_MODE=false` the app uses the real time and the buttons disappear.
+**The demo clock.** The app does not use today's date. It runs on a shared *story time* that starts at **Thu 9 Apr 2026, 21:00** (the evening before the demo day) and moves forward at normal speed. Every timestamp, notice and countdown uses it, and phones show it in their top bar. The dispatcher sidebar shows it with **+15m**, **+1 h** and **Set…**. It never goes backwards.
+
+Field actions move the clock to the moment they would really happen, taken from that truck's own plan:
+
+| Action | Time recorded |
+|---|---|
+| Loader checks, flags or seals | 40 minutes before the trip's planned start |
+| Driver presses **Start trip** | The trip's planned start |
+| Driver presses **Arrived at …** | The stop's planned arrival, **or the current story time if that is later** |
+| Driver completes the stop | Arrival + the predicted unloading time |
+
+So, if you click through at a normal pace, every stop is recorded on time and stores see *on time*. A stop is late when the clock is already past its planned arrival, either because you pressed **+15m** / **+1 h** first or because real time passed between clicks. The delay then carries on to the stops after it, and the stores further down the route see their expected time move. A truck is never recorded as early. With `DEMO_MODE=false` all of this is off: every action is stamped with the real time on the phone, and the clock buttons disappear.
 
 Use a desktop window for the dispatcher. For the other roles, use a phone or a narrow window (about 390 px), in a private window so each role keeps its own session.
 
@@ -88,7 +99,7 @@ Use a desktop window for the dispatcher. For the other roles, use a phone or a n
 
 **Driver (phone): offline mode**
 8. Sign in as **Driver** (VEH041). Press **Start trip** and complete the first stop: receiver name, signature, then **Complete stop**.
-9. Open the account menu (top right) and switch on **Simulate no signal**. The app works exactly as it would with no coverage. You can also turn the phone's network off for real. Record the remaining stops: each is **Saved on phone**, and the header counts what is waiting.
+9. Tap the **Online** chip in the top bar and switch on **Simulate no signal**. The app works exactly as it would with no coverage. You can also turn the phone's network off for real. Record the remaining stops: each is **Saved on phone**, and the header counts what is waiting.
 10. In the dispatcher's **Live run**, VEH041 shows as *No signal* with its last record and the predicted next stop.
 
 **Store manager (phone)**
@@ -143,7 +154,7 @@ The Designathon prototype was our starting point. Here is where the build differ
 | Oversized orders not covered | Orders stay whole. An oversized order is deferred as `OVERSIZE` with a **Split into two loads** action | The allocation rules treat orders as whole units, so splitting is a decision the dispatcher makes and can see. |
 | Drag a stop between trips on the plan | **Move…** on each order lists only the vehicles it can legally go to. Illegal moves are refused with the rule | Same checks, but works with touch and keyboard, and judges cannot drop an order somewhere it cannot go. |
 | Forecast for the next 8 weeks | 10 weeks, from a seasonal × recent-trend weekly model | The Datathon model is due later and will replace it behind the same API. |
-| Offline shown by losing coverage | Real offline **and** a **Simulate no signal** switch in the account menu | Judges can test recovery without touching device settings. Both paths use the same outbox. |
+| Offline shown by losing coverage | Real offline **and** a **Simulate no signal** switch behind the **Online** chip | Judges can test recovery without touching device settings. Both paths use the same outbox. |
 | **Escalate to ops manager** on the deferral screen | Not built | There is no ops-manager role in the brief's four roles. Every decision is still logged with who, when and why. |
 | One driver and one store | **Vehicle (demo)** and **Outlet (demo)** pickers, plus **Reset demo day** | They let one set of seeded accounts show every case, including a deferred store. With `DEMO_MODE=false` the pickers disappear and the server holds every account to its own outlet, vehicle and depot. |
 | A single delivery day | A **day switch** for the dispatcher: the demo day and the **next run** | Orders deferred today and new store orders land on the next run, which can be planned with the same engine. Fuel used by published plans earlier in the week counts against the weekly quota. |

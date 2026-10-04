@@ -82,8 +82,8 @@ await v.mouse.move(b.x + 20, b.y + 60); await v.mouse.down(); await v.mouse.move
 await shot(v, 'v2-stop');
 await v.getByRole('button', { name: /Complete stop/ }).click(); await v.waitForTimeout(1200);
 // Signal drops: simulate from the menu.
-await v.getByRole('button', { name: 'Connection and account' }).click();
-await v.getByRole('checkbox').check(); await v.getByRole('button', { name: 'Connection and account' }).click();
+await v.getByRole('button', { name: 'Connection status and Simulate no signal' }).click();
+await v.getByRole('checkbox').check(); await v.getByRole('button', { name: 'Connection status and Simulate no signal' }).click();
 let guard = 0;
 while (await v.getByPlaceholder('Name of store staff').count() === 0 && guard++ < 3) { const b2 = v.getByRole('button', { name: /^Arrived at/ }); if (await b2.count()) await b2.click(); }
 let first = true;
@@ -112,7 +112,7 @@ await m.getByRole('button', { name: 'Damaged' }).click(); await m.getByRole('but
 await m.getByRole('button', { name: 'Send report' }).click(); await m.waitForTimeout(1500); await shot(m, 'm3-receipt');
 
 step('Driver reconnects: sync report');
-await v.getByRole('button', { name: 'Connection and account' }).click();
+await v.getByRole('button', { name: 'Connection status and Simulate no signal' }).click();
 await v.getByRole('checkbox').uncheck();
 const synced = await v.waitForResponse((r) => r.url().includes('/api/sync'), { timeout: 20000 }).catch(() => null);
 console.log('  sync response:', synced ? synced.status() : 'none'); await v.waitForTimeout(2000);
