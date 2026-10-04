@@ -74,7 +74,8 @@ export async function driverRun(session: Session, vehicleId?: string | null) {
 const dayStart = (date: string) => new Date(`${date}T00:00:00+05:30`).getTime();
 /** The latest stop before `seq` on this trip that the driver has recorded, in minutes after midnight on the demo day. */
 function lastReported(stops: { seq: number; etaMin: number; status: string; arrivedAt: Date | string | null }[], seq: number) {
-  const done = stops.filter((x) => x.seq < seq && x.status !== 'pending' && x.arrivedAt).sort((a, b) => b.seq - a.seq)[0];
+  // An arrival counts as soon as it is recorded, even before the stop is completed.
+  const done = stops.filter((x) => x.seq < seq && x.arrivedAt).sort((a, b) => b.seq - a.seq)[0];
   if (!done) return null;
   return { seq: done.seq, etaMin: done.etaMin, arrivedMin: (new Date(done.arrivedAt!).getTime() - dayStart(DEMO_DATE)) / 60_000 };
 }
@@ -257,6 +258,13 @@ export async function applyEvents(session: Session, events: SyncEventIn[]) {
         }
         case 'driver.depart': {
           await db.update(s.trips).set({ status: 'departed', departedAt: at, lastSyncAt: demoNow() }).where(eq(s.trips.id, p.tripId));
+          break;
+        }
+        case 'driver.arrive': {
+          // The truck reached a stop. Keep the first arrival time; completing the stop records the rest.
+          if (session.role !== 'DRIVER') throw new Error('Only drivers can arrive');
+          await db.update(s.stops).set({ arrivedAt: p.arrivedAt ? new Date(p.arrivedAt) : at }).where(and(eq(s.stops.id, p.stopId), eq(s.stops.status, 'pending'), sql`${s.stops.arrivedAt} IS NULL`));
+          await db.update(s.trips).set({ lastSyncAt: demoNow() }).where(eq(s.trips.id, p.tripId));
           break;
         }
         case 'driver.heartbeat': {

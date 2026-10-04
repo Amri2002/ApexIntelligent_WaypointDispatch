@@ -1,7 +1,7 @@
 'use client';
 // V1 · Today's run, V2 · Record a stop, G2 · No signal, G3 · Back online.
 // The run is saved on the phone; every stop record is queued on the device and sent when there is signal.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FieldBar } from '@/components/FieldBar';
 import { Icon } from '@/components/Icon';
 import { SignaturePad } from '@/components/SignaturePad';
@@ -109,6 +109,13 @@ function StopScreen({ trip, stop, date, online, pendingCount, onDone }: { trip: 
   const [signature, setSignature] = useState<string | null>(null);
   const [photo, setPhoto] = useState<string | null>(null);
   const [gps, setGps] = useState<string | null>(null);
+  // Record the arrival straight away, so the phone's clock (and, once sent, everyone's) shows it.
+  const arrivalSent = useRef(false);
+  useEffect(() => {
+    if (arrivalSent.current || stop.status !== 'pending') return;
+    arrivalSent.current = true;
+    void enqueue('driver.arrive', { tripId: trip.id, stopId: stop.id, arrivedAt }, new Date(arrivedAt));
+  }, [arrivedAt, stop.id, stop.status, trip.id]);
   useEffect(() => { navigator.geolocation?.getCurrentPosition((p) => setGps(`${p.coords.latitude.toFixed(5)},${p.coords.longitude.toFixed(5)}`), () => undefined, { timeout: 5000 }); }, []);
   const arrMin = (() => { const d = new Date(arrivedAt); return d.getHours() * 60 + d.getMinutes(); })();
   const nextStop = trip.stops.find((s) => s.seq > stop.seq && s.status === 'pending');
