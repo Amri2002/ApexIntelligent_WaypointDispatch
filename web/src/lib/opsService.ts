@@ -90,9 +90,13 @@ export async function storeOverview(outletId: string) {
   const monsoon = !!(await db.select().from(s.calendarDays).where(eq(s.calendarDays.date, DEMO_DATE)))[0]?.monsoon;
   const deliveries = trips.map((t) => {
     const stop = t.stops.find((x) => x.outletId === outletId)!;
-    const done = t.stops.filter((x) => x.status !== 'pending').length;
-    return { trip: { id: t.id, vehicleId: t.vehicleId, tripNo: t.tripNo, status: t.status, startMin: t.startMin, sealedAt: t.sealedAt, departedAt: t.departedAt, lastSyncAt: t.lastSyncAt, isOffline: t.isOffline, stopsTotal: t.stops.length, stopsDone: done, flags: t.flags.filter((f) => f.stopId === stop.id) }, stop , arrival: liveArrival(stop.etaMin, stop.seq, monsoon, lastReported(t.stops, stop.seq)) };
+    const doneStops = t.stops.filter((x) => x.status !== 'pending');
+    const done = doneStops.length;
+    // When the latest recorded stop on this trip was completed (not when the phone last synced).
+    const lastDoneAt = doneStops.map((x) => x.completedAt).filter(Boolean).sort((x, y) => new Date(y!).getTime() - new Date(x!).getTime())[0] ?? null;
+    return { trip: { id: t.id, vehicleId: t.vehicleId, tripNo: t.tripNo, status: t.status, startMin: t.startMin, sealedAt: t.sealedAt, departedAt: t.departedAt, lastSyncAt: t.lastSyncAt, lastDoneAt, isOffline: t.isOffline, stopsTotal: t.stops.length, stopsDone: done, flags: t.flags.filter((f) => f.stopId === stop.id) }, stop , arrival: liveArrival(stop.etaMin, stop.seq, monsoon, lastReported(t.stops, stop.seq)) };
   });
+  deliveries.sort((x, y) => x.stop.etaMin - y.stop.etaMin); // a store can get one delivery per truck (e.g. chilled on a reefer, dry on a truck)
   const notes = await db.select().from(s.notifications).where(eq(s.notifications.audience, `OUTLET:${outletId}`)).orderBy(desc(s.notifications.createdAt));
   const outlets = await db.select({ id: s.outlets.id, brand: s.outlets.brand, district: s.outlets.district }).from(s.outlets).orderBy(asc(s.outlets.id));
   return { outlet, date: DEMO_DATE, nextDate, orders, deliveries, notes, outlets: DEMO_MODE ? outlets : outlets.filter((o) => o.id === outletId), demo: DEMO_MODE, cutoff: '16:00' };

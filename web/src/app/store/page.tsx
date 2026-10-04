@@ -1,7 +1,7 @@
 'use client';
 // M2 · Expected arrival, G4 · Deferral notice, M3 · Confirm receipt — the store manager's day in one screen.
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Icon } from '@/components/Icon';
 import { api, logout } from '@/lib/client/api';
 import { compressPhoto } from '@/lib/client/image';
@@ -9,16 +9,20 @@ import { fmt, prettyDate, slTime } from '@/lib/time';
 
 interface Note { id: string; kind: string; title: string; body: string; createdAt: string; response: string | null }
 interface Ord { id: string; ref: string; temp: string; units: number; status: string; deliveryDate: string; stopId: string | null; volumeM3: number; createdAt: string }
-interface Delivery { trip: { id: string; vehicleId: string; tripNo: number; status: string; sealedAt: string | null; departedAt: string | null; lastSyncAt: string | null; isOffline: boolean; stopsTotal: number; stopsDone: number; flags: { id: string; qty: number; item: string; issueType: string }[] }; stop: { id: string; seq: number; etaMin: number; status: string; completedAt: string | null; receiverName: string | null; photo: string | null; deliveredUnits: number | null; units: number; chilledUnits: number; expectedUnits: number; lateRisk: number; receipt: { status: string; issueType: string | null; matchedFlagId: string | null } | null; orders: Ord[] } ; arrival: { earliest: number; likely: number; latest: number; basis: 'history' | 'live'; lateNowMin: number | null; lastSeq: number | null } }
+interface Delivery { trip: { id: string; vehicleId: string; tripNo: number; status: string; sealedAt: string | null; departedAt: string | null; lastSyncAt: string | null; lastDoneAt: string | null; isOffline: boolean; stopsTotal: number; stopsDone: number; flags: { id: string; qty: number; item: string; issueType: string }[] }; stop: { id: string; seq: number; etaMin: number; status: string; completedAt: string | null; receiverName: string | null; photo: string | null; deliveredUnits: number | null; units: number; chilledUnits: number; expectedUnits: number; lateRisk: number; receipt: { status: string; issueType: string | null; matchedFlagId: string | null } | null; orders: Ord[] } ; arrival: { earliest: number; likely: number; latest: number; basis: 'history' | 'live'; lateNowMin: number | null; lastSeq: number | null } }
 interface Overview { outlet: { id: string; brand: string; district: string; windowOpen: string; windowClose: string; dockType: string }; date: string; nextDate: string; orders: Ord[]; deliveries: Delivery[]; notes: Note[]; outlets: { id: string; brand: string; district: string }[] }
 
 export default function StorePage() {
-  const [outlet, setOutlet] = useState<string | null>(null);
+  const [outlet, setOutlet] = useState<string | null | undefined>(undefined); // undefined until the saved outlet is read
   const [data, setData] = useState<Overview | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [here, setHere] = useState(false);
   useEffect(() => { setOutlet(localStorage.getItem('wp-store-outlet')); }, []);
-  const load = useCallback(() => api<Overview>(`/api/store/overview${outlet ? `?outlet=${outlet}` : ''}`).then(setData), [outlet]);
+  const latest = useRef(0);
+  const load = useCallback(() => {
+    if (outlet === undefined) return Promise.resolve();
+    const n = ++latest.current; // ignore an older response that arrives after a newer one (e.g. after switching outlet)
+    return api<Overview>(`/api/store/overview${outlet ? `?outlet=${outlet}` : ''}`).then((d) => { if (n === latest.current) setData(d); });
+  }, [outlet]);
   useEffect(() => { void load(); const t = setInterval(load, 10000); return () => clearInterval(t); }, [load]);
 
   if (!data) return <div className="phone"><main className="pbody">Loading…</main></div>;
@@ -26,7 +30,7 @@ export default function StorePage() {
   const requests = data.notes.filter((n) => n.kind === 'window_request' && !n.response);
   const flags = data.notes.filter((n) => n.kind === 'flag');
   const changes = data.notes.filter((n) => n.kind === 'plan_change');
-  const today = data.deliveries[0];
+  const today = data.deliveries;
   const nextOrders = data.orders.filter((o) => o.deliveryDate > data.date);
 
   return (
@@ -44,11 +48,10 @@ export default function StorePage() {
         {requests.map((n) => <WindowRequest key={n.id} note={n} outlet={data.outlet.id} onDone={(m) => { setMsg(m); void load(); }} />)}
         {deferrals.map((n) => <DeferralNotice key={n.id} note={n} outlet={data.outlet.id} onDone={() => void load()} />)}
 
-        {today ? <Arrival d={today} outlet={data.outlet} /> : <div className="blk"><span className="lbl">Today · {prettyDate(data.date)}</span><span>{data.orders.some((o) => o.deliveryDate === data.date && o.status === 'deferred') ? 'Your order for today was moved — see the notice above.' : 'No delivery on the published plan for today yet.'}</span></div>}
+        {today.length > 1 && <div className="row" style={{ fontSize: 13.5 }}><Icon name="truck" size={18} /><span><b>{today.length} deliveries today</b> · {today.map((d) => `${d.stop.chilledUnits === d.stop.units ? 'chilled' : d.stop.chilledUnits ? 'mixed' : 'dry'} on ${d.trip.vehicleId}`).join(', ')}</span></div>}
+        {today.length ? today.map((d, i) => <DeliveryCard key={d.stop.id} d={d} n={i + 1} of={today.length} outlet={data.outlet} onDone={(m) => { setMsg(m); void load(); }} />) : <div className="blk"><span className="lbl">Today · {prettyDate(data.date)}</span><span>{data.orders.some((o) => o.deliveryDate === data.date && o.status === 'deferred') ? 'Your order for today was moved — see the notice above.' : 'No delivery on the published plan for today yet.'}</span></div>}
         {changes.map((n) => <div key={n.id} className="blk" style={{ background: '#EEF4FA', borderColor: '#BFD3E6' }}><span className="tag" style={{ alignSelf: 'flex-start' }}>Plan changed · {slTime(n.createdAt)}</span><b>{n.title}</b><span style={{ fontSize: 13.5 }}>{n.body}</span></div>)}
         {flags.map((n) => <div key={n.id} className="blk" style={{ background: '#FFF8EC', borderColor: '#E8C98A' }}><span className="tag t-warn" style={{ alignSelf: 'flex-start' }}>From the dock · {slTime(n.createdAt)}</span><b>{n.title}</b><span style={{ fontSize: 13.5 }}>{n.body}</span></div>)}
-        {today && (today.stop.status !== 'pending' || here || today.stop.receipt) && <Receipt d={today} outlet={data.outlet.id} onDone={(m) => { setMsg(m); void load(); }} />}
-        {today && today.stop.status === 'pending' && !here && !today.stop.receipt && <button className="btn btn-p btn-lg" onClick={() => setHere(true)}>The truck is here</button>}
 
         <div className="blk"><div className="row"><span className="lbl">Upcoming orders</span><Link className="right" href="/store/order" style={{ fontWeight: 600 }}>Place order</Link></div>
           {nextOrders.length ? nextOrders.map((o) => <div key={o.id} className="row" style={{ fontSize: 13.5, borderTop: '1px solid var(--line-soft)', paddingTop: 6 }}><Icon name="check" size={16} style={{ color: 'var(--ok)' }} /><span className="mono">{o.ref}</span><span className="muted">{prettyDate(o.deliveryDate, { weekday: 'short', day: 'numeric', month: 'short' })} · {o.temp} · {o.units} units</span>{o.ref.endsWith('-D') && <span className="tag t-warn right">Moved from today · first in line</span>}</div>) : <span className="muted" style={{ fontSize: 13.5 }}>Nothing ordered yet. Orders close at 16:00 the day before.</span>}
@@ -56,6 +59,20 @@ export default function StorePage() {
       </main>
       {msg && <div className="toast" role="status" onAnimationEnd={() => setMsg(null)} onClick={() => setMsg(null)}>{msg}</div>}
     </div>
+  );
+}
+
+/** One truck's delivery to this store: arrival, progress, then the receipt. */
+function DeliveryCard({ d, n, of, outlet, onDone }: { d: Delivery; n: number; of: number; outlet: Overview['outlet']; onDone: (m: string) => void }) {
+  const [here, setHere] = useState(false);
+  const kind = d.stop.chilledUnits === d.stop.units ? 'Chilled' : d.stop.chilledUnits ? 'Chilled and dry' : 'Dry goods';
+  return (
+    <>
+      {of > 1 && <span className="lbl" style={{ marginTop: n > 1 ? 10 : 0 }}>Delivery {n} of {of} · {kind} · {d.trip.vehicleId}</span>}
+      <Arrival d={d} outlet={outlet} />
+      {(d.stop.status !== 'pending' || here || d.stop.receipt) && <Receipt d={d} outlet={outlet.id} onDone={onDone} />}
+      {d.stop.status === 'pending' && !here && !d.stop.receipt && <button className="btn btn-p btn-lg" onClick={() => setHere(true)}>{of > 1 ? `${d.trip.vehicleId} is here` : 'The truck is here'}</button>}
+    </>
   );
 }
 
@@ -67,7 +84,8 @@ function Arrival({ d, outlet }: { d: Delivery; outlet: Overview['outlet'] }) {
     { on: true, t: 'Order confirmed', at: '' },
     { on: !!d.trip.sealedAt, t: d.trip.flags.length ? `Loaded and sealed · ${d.trip.flags.reduce((a, f) => a + f.qty, 0)} short (flagged at the dock)` : 'Loaded and sealed · nothing short for you', at: slTime(d.trip.sealedAt) },
     { on: !!d.trip.departedAt, t: 'Left the depot', at: slTime(d.trip.departedAt) },
-    { on: d.trip.stopsDone > 0, t: `Stop ${d.trip.stopsDone} of ${d.trip.stopsTotal} delivered`, at: slTime(d.trip.lastSyncAt) },
+    // The truck's progress matters only until this store's own stop is done.
+    ...(done ? [] : [{ on: d.trip.stopsDone > 0, t: `Stop ${d.trip.stopsDone} of ${d.trip.stopsTotal} delivered`, at: slTime(d.trip.lastDoneAt ?? d.trip.lastSyncAt) }]),
   ];
   return (
     <>
