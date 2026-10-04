@@ -2,8 +2,9 @@
 // D2 · Plan and allocate — the engine's proposal on a timeline, with live constraint checks and manual edits.
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { DispatcherShell, DepotSwitch, useDepot, Toast } from '@/components/DispatcherShell';
+import { DispatcherShell, DepotSwitch, useDepot, DaySwitch, usePlanDate, Toast } from '@/components/DispatcherShell';
 import { Icon } from '@/components/Icon';
+import { MoveDialog } from '@/components/MoveDialog';
 import { api, ApiError } from '@/lib/client/api';
 import type { PlanView } from '@/lib/planService';
 import { fmt, prettyDate } from '@/lib/time';
@@ -13,22 +14,38 @@ const pct = (m: number) => `${((Math.max(START, Math.min(END, m)) - START) / SPA
 
 export default function PlanPage() {
   const [depot, setDepot] = useDepot();
+  const [date, day, setDay, days] = usePlanDate();
   const [view, setView] = useState<PlanView | null>(null);
   const [sel, setSel] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ msg: string; bad?: boolean } | null>(null);
   const [moving, setMoving] = useState<{ orderId: string; ref: string } | null>(null);
 
-  const load = useCallback(() => api<PlanView>(`/api/plans?depot=${depot}`).then((v) => { setView(v); setSel((s) => (s && v.trips.some((t) => t.id === s) ? s : v.trips[0]?.id ?? null)); }), [depot]);
+  const load = useCallback(() => { if (!date) return; return api<PlanView>(`/api/plans?depot=${depot}&date=${date}`).then((v) => { setView(v); setSel((s) => (s && v.trips.some((t) => t.id === s) ? s : v.trips[0]?.id ?? null)); }); }, [depot, date]);
   useEffect(() => { void load(); }, [load]);
 
-  const run = async () => { setBusy(true); try { const v = await api<PlanView>('/api/plans', { json: { depot } }); setView(v); setSel(v.trips[0]?.id ?? null); setToast({ msg: `Planned ${v.totals.placed} of ${v.totals.orders} orders` }); } catch (e) { setToast({ msg: (e as Error).message, bad: true }); } setBusy(false); };
+  const run = async () => { setBusy(true); try { const v = await api<PlanView>('/api/plans', { json: { depot, date } }); setView(v); setSel(v.trips[0]?.id ?? null); setToast({ msg: `Planned ${v.totals.placed} of ${v.totals.orders} orders` }); } catch (e) { setToast({ msg: (e as Error).message, bad: true }); } setBusy(false); };
   const publish = async () => { if (!view?.plan) return; setBusy(true); try { setView(await api<PlanView>(`/api/plans/${view.plan.id}/publish`, { json: {} })); setToast({ msg: 'Published to docks and drivers' }); } catch (e) { setToast({ msg: (e as Error).message, bad: true }); } setBusy(false); };
   const move = async (orderId: string, vehicleId: string | null) => {
     if (!view?.plan) return;
     setBusy(true);
     try { setView(await api<PlanView>(`/api/plans/${view.plan.id}/move`, { json: vehicleId ? { orderId, vehicleId } : { orderId, unplace: true } })); setToast({ msg: vehicleId ? `Moved to ${vehicleId} — all checks pass` : 'Taken off the plan — decide it on the Deferrals screen' }); setMoving(null); }
     catch (e) { setToast({ msg: `Not allowed: ${(e as ApiError).message}`, bad: true }); }
+    setBusy(false);
+  };
+
+  const breakdown = async (vehicleId: string) => {
+    if (!view?.plan) return;
+    if (!confirm(`Report ${vehicleId} as broken down? Its trips that have not left the depot will be re-planned onto other vehicles, and anything that cannot move is deferred. The dock and the affected stores are told straight away.`)) return;
+    setBusy(true);
+    try {
+      const r = await api<{ view: PlanView; summary: { moved: { ref: string; vehicleId: string }[]; deferred: { ref: string }[] } }>(`/api/plans/${view.plan.id}/breakdown`, { json: { vehicleId } });
+      setView(r.view);
+      const m = r.summary.moved, d = r.summary.deferred;
+      setToast({ msg: `${vehicleId} out of service. ${m.length} ${m.length === 1 ? 'order' : 'orders'} moved${m.length ? ` (${[...new Set(m.map((x) => x.vehicleId))].join(', ')})` : ''}, ${d.length} deferred. Dock and stores notified.` });
+      const first = r.view.trips.find((t) => m.some((x) => x.vehicleId === t.vehicleId));
+      setSel(first?.id ?? r.view.trips[0]?.id ?? null);
+    } catch (e) { setToast({ msg: (e as ApiError).message, bad: true }); }
     setBusy(false);
   };
 
@@ -45,6 +62,7 @@ export default function PlanPage() {
         <h1 style={{ fontSize: 20, fontWeight: 700 }}>Plan · {view ? prettyDate(view.date, { weekday: 'long', day: 'numeric', month: 'long' }) : '…'}</h1>
         {view?.plan && <span className={`tag ${published ? 't-ok' : ''}`}>{published ? `Published ${new Date(view.plan.publishedAt!).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} by ${view.plan.publishedBy}` : 'Draft'}</span>}
         <div className="row right" style={{ gap: 10 }}>
+          <DaySwitch day={day} onChange={setDay} days={days} />
           <DepotSwitch depot={depot} onChange={setDepot} />
           {!published && <button className="btn btn-s" onClick={run} disabled={busy}>{view?.plan ? 'Re-run planner' : 'Run planner'}</button>}
           <button className="btn btn-p" onClick={publish} disabled={busy || !view?.plan || published || (t?.undecided ?? 0) > 0} title={(t?.undecided ?? 0) > 0 ? 'Decide the unplaced orders first' : ''}>{published ? 'Published' : 'Publish to docks and drivers'}</button>
@@ -95,25 +113,10 @@ export default function PlanPage() {
               <div className="muted" style={{ fontSize: 12, paddingTop: 8 }}>{idle.length} available vehicles idle{idle.length ? ` (${idle.slice(0, 6).map((v) => v.id).join(', ')}${idle.length > 6 ? '…' : ''})` : ''} · {t!.workshop.length} in workshop</div>
             </div>
           </section>
-          {trip && <TripPanel trip={trip} view={view} onMove={(o) => setMoving(o)} busy={busy} published={published} onUnplace={(id) => move(id, null)} />}
+          {trip && <TripPanel trip={trip} view={view} onMove={(o) => setMoving(o)} busy={busy} published={published} onUnplace={(id) => move(id, null)} onBreakdown={breakdown} />}
         </div>
       )}
-      {moving && view && (
-        <div role="dialog" aria-label="Move order" style={{ position: 'fixed', inset: 0, background: 'rgba(22,24,29,.45)', display: 'grid', placeItems: 'center', zIndex: 40 }} onClick={() => setMoving(null)}>
-          <div className="card col" style={{ padding: 20, width: 420, maxWidth: '92vw' }} onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ fontSize: 18 }}>Move {moving.ref} to…</h2>
-            <p className="muted" style={{ margin: 0, fontSize: 13 }}>Every rule is re-checked. If the move breaks one, it is refused with the reason.</p>
-            <div className="col scroll" style={{ maxHeight: 360, gap: 6 }}>
-              {view.vehicles.filter((v) => v.status === 'available').map((v) => (
-                <button key={v.id} className="btn btn-s" style={{ justifyContent: 'space-between' }} disabled={busy} onClick={() => move(moving.orderId, v.id)}>
-                  <span className="mono">{v.id}</span><span className="muted" style={{ fontWeight: 500 }}>{v.temp} {v.type} · {v.volumeCapM3} m³ · {trips.filter((x) => x.vehicleId === v.id).length} trips</span>
-                </button>
-              ))}
-            </div>
-            <button className="btn btn-s" onClick={() => setMoving(null)}>Cancel</button>
-          </div>
-        </div>
-      )}
+      {moving && view?.plan && <MoveDialog planId={view.plan.id} order={moving} verb="Move" busy={busy} onPick={(vid) => move(moving.orderId, vid)} onClose={() => setMoving(null)} />}
       {toast && <Toast msg={toast.msg} bad={toast.bad} onDone={() => setToast(null)} />}
     </DispatcherShell>
   );
@@ -128,7 +131,7 @@ function Meter({ label, value, frac, color, bad }: { label: string; value: strin
   );
 }
 
-function TripPanel({ trip, view, onMove, onUnplace, busy, published }: { trip: PlanView['trips'][number]; view: PlanView; onMove: (o: { orderId: string; ref: string }) => void; onUnplace: (id: string) => void; busy: boolean; published: boolean }) {
+function TripPanel({ trip, view, onMove, onUnplace, onBreakdown, busy, published }: { trip: PlanView['trips'][number]; view: PlanView; onMove: (o: { orderId: string; ref: string }) => void; onUnplace: (id: string) => void; onBreakdown: (vehicleId: string) => void; busy: boolean; published: boolean }) {
   const v = trip.vehicle;
   const vTrips = view.trips.filter((x) => x.vehicleId === v.id);
   const freshMin = vTrips.filter((x) => x.brand === 'Fresh').reduce((a, x) => a + x.tripMinutes, 0);
@@ -158,7 +161,7 @@ function TripPanel({ trip, view, onMove, onUnplace, busy, published }: { trip: P
           <tr key={s.id}><td>{s.seq}</td><td className="mono">{s.outlet.id}{s.orders.some((o) => o.deferredYesterday) && <Icon name="lock" size={13} style={{ color: 'var(--warn)', marginLeft: 3 }} />}</td><td>{s.outlet.windowOpen}–{s.outlet.windowClose}</td><td>{fmt(s.etaMin)}</td><td>{Math.round(s.predServiceMin)} m</td><td style={{ color: s.lateRisk > 0.3 ? 'var(--warn)' : undefined, fontWeight: s.lateRisk > 0.3 ? 700 : 400 }}>{Math.round(s.lateRisk * 100)}%</td></tr>
         ))}</tbody>
       </table>
-      <div className="muted" style={{ fontSize: 11.5 }}>Svc = predicted service minutes. Late = predicted chance of arriving after the window closes, using hourly traffic. Lock = deferred yesterday.</div>
+      <div className="muted" style={{ fontSize: 11.5 }}>Svc = predicted service minutes. Late = chance of arriving after the window closes, from a model fitted on 91,894 past arrivals (dry vs monsoon). Lock = deferred yesterday.</div>
       <div className="col" style={{ gap: 6 }}>
         <div className="row" style={{ justifyContent: 'space-between', fontSize: 12.5 }}><span>Volume</span><b>{trip.loadM3.toFixed(1)} / {v.volumeCapM3} m³</b></div>
         <div className="meter"><span style={{ width: `${(trip.loadM3 / v.volumeCapM3) * 100}%`, background: 'var(--chill)' }} /></div>
@@ -178,6 +181,13 @@ function TripPanel({ trip, view, onMove, onUnplace, busy, published }: { trip: P
           </div>
         ))}
       </div>}
+      {published && ['planned', 'loading', 'sealed'].includes(trip.status) && (
+        <div style={{ borderTop: '1px solid var(--line-soft)', paddingTop: 10 }} className="col">
+          <div className="lbl">If something goes wrong</div>
+          <button className="btn btn-s" style={{ borderColor: '#E8A79F', color: 'var(--bad)' }} disabled={busy} onClick={() => onBreakdown(v.id)}><Icon name="alert" size={15} />Report {v.id} broken down</button>
+          <span className="muted" style={{ fontSize: 11.5 }}>Re-plans its trips that have not left yet onto vehicles still at the depot, with the same rules.</span>
+        </div>
+      )}
     </aside>
   );
 }

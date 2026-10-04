@@ -2,8 +2,10 @@
 // offline sync endpoint that applies queued events exactly once.
 import { and, eq, inArray, asc, desc, sql } from 'drizzle-orm';
 import { db, schema as s } from '@/db';
-import { HttpError, type Session } from './auth';
+import { HttpError, DEMO_MODE, type Session } from './auth';
 import { DEMO_DATE, prettyDate } from './time';
+import { liveArrival } from './engine/arrivalDelay';
+import { demoNow, advanceTo } from './clock';
 import { nextOperatingDay } from './planService';
 
 const OFFLINE_AFTER_MS = 90_000; // a departed vehicle with no record for 90 s shows as offline
@@ -36,7 +38,7 @@ async function publishedTrips(where: { depot?: string; vehicleId?: string; tripI
         receipt: receipts.find((r) => r.stopId === x.id) ?? null,
       };
     }),
-    isOffline: t.status === 'departed' && (!t.lastSyncAt || Date.now() - new Date(t.lastSyncAt).getTime() > OFFLINE_AFTER_MS),
+    isOffline: t.status === 'departed' && (!t.lastSyncAt || demoNow().getTime() - new Date(t.lastSyncAt).getTime() > OFFLINE_AFTER_MS),
   }));
 }
 export type TripView = Awaited<ReturnType<typeof publishedTrips>>[number];
@@ -47,9 +49,10 @@ export async function loaderDepartures(depot: string) {
   const notes = await db.select().from(s.notifications).where(eq(s.notifications.audience, `LOADER:${depot}`)).orderBy(desc(s.notifications.createdAt)).limit(3);
   return { depot, date: DEMO_DATE, trips, notes };
 }
-export async function loaderTrip(id: string) {
+export async function loaderTrip(id: string, session?: Session) {
   const [t] = await publishedTrips({ tripIds: [id] });
   if (!t) throw new HttpError(404, 'Trip not found or not published');
+  if (session) { try { await assertOwnTrip(session, id); } catch { throw new HttpError(404, 'Trip not found or not published'); } }
   return t;
 }
 
@@ -58,51 +61,114 @@ export async function driverRun(session: Session, vehicleId?: string | null) {
   const all = await publishedTrips({});
   const vehicles = [...new Set(all.map((t) => t.vehicleId))].sort();
   let vid = vehicleId || session.vehicleId || null;
-  if (!vid || !vehicles.includes(vid)) {
+  if (!DEMO_MODE) vid = session.vehicleId;
+  else if (!vid || !vehicles.includes(vid)) {
     // Default: the vehicle that serves the demo store manager's outlet, so the walkthrough connects.
     const store = (await db.select().from(s.users).where(eq(s.users.role, 'STORE_MANAGER')))[0];
     vid = all.find((t) => t.stops.some((x) => x.outletId === store?.outletId))?.vehicleId ?? vehicles[0] ?? null;
   }
-  return { date: DEMO_DATE, vehicleId: vid, vehicles, trips: all.filter((t) => t.vehicleId === vid), serverTime: new Date().toISOString() };
+  return { date: DEMO_DATE, vehicleId: vid, vehicles: DEMO_MODE ? vehicles : vehicles.filter((v) => v === vid), demo: DEMO_MODE, trips: all.filter((t) => t.vehicleId === vid), serverTime: demoNow().toISOString() };
 }
 
 // ---------- Store manager ----------
+const dayStart = (date: string) => new Date(`${date}T00:00:00+05:30`).getTime();
+/** The latest stop before `seq` on this trip that the driver has recorded, in minutes after midnight on the demo day. */
+function lastReported(stops: { seq: number; etaMin: number; status: string; arrivedAt: Date | string | null }[], seq: number) {
+  // An arrival counts as soon as it is recorded, even before the stop is completed.
+  const done = stops.filter((x) => x.seq < seq && x.arrivedAt).sort((a, b) => b.seq - a.seq)[0];
+  if (!done) return null;
+  return { seq: done.seq, etaMin: done.etaMin, arrivedMin: (new Date(done.arrivedAt!).getTime() - dayStart(DEMO_DATE)) / 60_000 };
+}
+
 export async function storeOverview(outletId: string) {
   const outlet = (await db.select().from(s.outlets).where(eq(s.outlets.id, outletId)))[0];
   if (!outlet) throw new HttpError(404, 'Outlet not found');
   const nextDate = await nextOperatingDay(DEMO_DATE);
-  const orders = await db.select().from(s.orders).where(and(eq(s.orders.outletId, outletId), inArray(s.orders.deliveryDate, [DEMO_DATE, nextDate]))).orderBy(asc(s.orders.createdAt));
+  const orders = await db.select().from(s.orders).where(and(eq(s.orders.outletId, outletId), sql`${s.orders.deliveryDate} >= ${DEMO_DATE}`)).orderBy(asc(s.orders.createdAt));
   const stopIds = [...new Set(orders.map((o) => o.stopId).filter(Boolean))] as string[];
   const stopRows = stopIds.length ? await db.select().from(s.stops).where(inArray(s.stops.id, stopIds)) : [];
   const trips = stopRows.length ? await publishedTrips({ tripIds: [...new Set(stopRows.map((x) => x.tripId))] }) : [];
+  const monsoon = !!(await db.select().from(s.calendarDays).where(eq(s.calendarDays.date, DEMO_DATE)))[0]?.monsoon;
   const deliveries = trips.map((t) => {
     const stop = t.stops.find((x) => x.outletId === outletId)!;
-    const done = t.stops.filter((x) => x.status !== 'pending').length;
-    return { trip: { id: t.id, vehicleId: t.vehicleId, tripNo: t.tripNo, status: t.status, startMin: t.startMin, sealedAt: t.sealedAt, departedAt: t.departedAt, lastSyncAt: t.lastSyncAt, isOffline: t.isOffline, stopsTotal: t.stops.length, stopsDone: done, flags: t.flags.filter((f) => f.stopId === stop.id) }, stop };
+    const doneStops = t.stops.filter((x) => x.status !== 'pending');
+    const done = doneStops.length;
+    // When the latest recorded stop on this trip was completed (not when the phone last synced).
+    const lastDoneAt = doneStops.map((x) => x.completedAt).filter(Boolean).sort((x, y) => new Date(y!).getTime() - new Date(x!).getTime())[0] ?? null;
+    return { trip: { id: t.id, vehicleId: t.vehicleId, tripNo: t.tripNo, status: t.status, startMin: t.startMin, sealedAt: t.sealedAt, departedAt: t.departedAt, lastSyncAt: t.lastSyncAt, lastDoneAt, isOffline: t.isOffline, stopsTotal: t.stops.length, stopsDone: done, flags: t.flags.filter((f) => f.stopId === stop.id) }, stop , arrival: liveArrival(stop.etaMin, stop.seq, monsoon, lastReported(t.stops, stop.seq)) };
   });
+  deliveries.sort((x, y) => x.stop.etaMin - y.stop.etaMin); // a store can get one delivery per truck (e.g. chilled on a reefer, dry on a truck)
   const notes = await db.select().from(s.notifications).where(eq(s.notifications.audience, `OUTLET:${outletId}`)).orderBy(desc(s.notifications.createdAt));
   const outlets = await db.select({ id: s.outlets.id, brand: s.outlets.brand, district: s.outlets.district }).from(s.outlets).orderBy(asc(s.outlets.id));
-  return { outlet, date: DEMO_DATE, nextDate, orders, deliveries, notes, outlets, cutoff: '16:00' };
+  return { outlet, date: DEMO_DATE, nextDate, orders, deliveries, notes, outlets: DEMO_MODE ? outlets : outlets.filter((o) => o.id === outletId), demo: DEMO_MODE, cutoff: '16:00' };
 }
 
-const CATALOGUE: Record<string, { name: string; pack: string; temp: 'chilled' | 'ambient'; kg: number; m3: number }> = {
-  milk: { name: 'Fresh milk 1 L', pack: 'Crate of 12', temp: 'chilled', kg: 13.2, m3: 0.03 },
-  yoghurt: { name: 'Yoghurt 80 g', pack: 'Carton of 24', temp: 'chilled', kg: 2.2, m3: 0.006 },
-  cheese: { name: 'Cheese slices', pack: 'Case', temp: 'chilled', kg: 4.5, m3: 0.012 },
-  butter: { name: 'Butter 200 g', pack: 'Case of 20', temp: 'chilled', kg: 4.2, m3: 0.01 },
-  rice: { name: 'Rice 5 kg', pack: 'Bag', temp: 'ambient', kg: 5, m3: 0.008 },
-  flour: { name: 'Wheat flour 1 kg', pack: 'Case of 10', temp: 'ambient', kg: 10.4, m3: 0.015 },
-  tea: { name: 'Tea 400 g', pack: 'Case of 12', temp: 'ambient', kg: 5.2, m3: 0.012 },
-  biscuits: { name: 'Biscuits', pack: 'Case of 24', temp: 'ambient', kg: 4.8, m3: 0.02 },
+type Item = { brand: 'Fresh' | 'Style' | 'Tech'; name: string; pack: string; temp: 'chilled' | 'ambient'; kg: number; m3: number };
+// What each brand's stores order (illustrative products; the datasets only have order totals).
+// Style and Tech pack sizes are set so typical orders match the history: a Style order is about
+// 8 m³ of light, bulky garments; a Tech order is a few heavy appliances.
+const CATALOGUE: Record<string, Item> = {
+  milk: { brand: 'Fresh', name: 'Fresh milk 1 L', pack: 'Crate of 12', temp: 'chilled', kg: 13.2, m3: 0.03 },
+  yoghurt: { brand: 'Fresh', name: 'Yoghurt 80 g', pack: 'Carton of 24', temp: 'chilled', kg: 2.2, m3: 0.006 },
+  cheese: { brand: 'Fresh', name: 'Cheese slices', pack: 'Case', temp: 'chilled', kg: 4.5, m3: 0.012 },
+  butter: { brand: 'Fresh', name: 'Butter 200 g', pack: 'Case of 20', temp: 'chilled', kg: 4.2, m3: 0.01 },
+  rice: { brand: 'Fresh', name: 'Rice 5 kg', pack: 'Bag', temp: 'ambient', kg: 5, m3: 0.008 },
+  flour: { brand: 'Fresh', name: 'Wheat flour 1 kg', pack: 'Case of 10', temp: 'ambient', kg: 10.4, m3: 0.015 },
+  tea: { brand: 'Fresh', name: 'Tea 400 g', pack: 'Case of 12', temp: 'ambient', kg: 5.2, m3: 0.012 },
+  biscuits: { brand: 'Fresh', name: 'Biscuits', pack: 'Case of 24', temp: 'ambient', kg: 4.8, m3: 0.02 },
+  folded: { brand: 'Style', name: 'Folded garments', pack: 'Carton of 20', temp: 'ambient', kg: 12, m3: 0.2 },
+  hanging: { brand: 'Style', name: 'Hanging garments', pack: 'Rail of 30', temp: 'ambient', kg: 18, m3: 0.35 },
+  footwear: { brand: 'Style', name: 'Footwear', pack: 'Carton of 12 pairs', temp: 'ambient', kg: 10, m3: 0.12 },
+  fridge: { brand: 'Tech', name: 'Double-door refrigerator', pack: 'Boxed, 1 unit', temp: 'ambient', kg: 140, m3: 1.1 },
+  washer: { brand: 'Tech', name: 'Washing machine', pack: 'Boxed, 1 unit', temp: 'ambient', kg: 90, m3: 0.75 },
+  tv: { brand: 'Tech', name: '65-inch television', pack: 'Boxed, 1 unit', temp: 'ambient', kg: 45, m3: 0.5 },
+  aircon: { brand: 'Tech', name: 'Inverter air conditioner', pack: 'Indoor + outdoor set', temp: 'ambient', kg: 75, m3: 0.6 },
 };
-export const catalogue = () => CATALOGUE;
+
+/** Orders close at 16:00 Sri Lanka time for the next run. */
+export const CUTOFF_MIN = 16 * 60;
+
+/** Story date (YYYY-MM-DD) and minute of day in Sri Lanka time. */
+function colomboNow() {
+  const sl = new Date(demoNow().getTime() + 330 * 60_000); // Asia/Colombo is UTC+05:30 all year
+  return { date: sl.toISOString().slice(0, 10), minute: sl.getUTCHours() * 60 + sl.getUTCMinutes() };
+}
+
+/**
+ * When a new order from this outlet is delivered, following its brand's schedule (booklet p.3)
+ * and the 16:00 cutoff. Before the cutoff the earliest run is the next operating day; after it,
+ * that run is already being planned, so the earliest is the operating day after. Fresh and Tech
+ * go on the earliest run; Style goes on the outlet's weekly day, on or after the earliest run.
+ */
+async function nextDeliveryFor(outlet: typeof s.outlets.$inferSelect) {
+  const now = colomboNow();
+  const afterCutoff = now.minute >= CUTOFF_MIN;
+  let earliest = await nextOperatingDay(now.date);
+  if (afterCutoff) earliest = await nextOperatingDay(earliest);
+  // The demo day itself is already planned and published, so never put a new order on it.
+  if (DEMO_MODE && earliest <= DEMO_DATE) earliest = await nextOperatingDay(DEMO_DATE);
+  const base = { cutoff: '16:00', afterCutoff, orderDay: now.date };
+  if (outlet.brand === 'Style' && outlet.deliveryWeekday) {
+    const days = await db.select().from(s.calendarDays).where(and(sql`${s.calendarDays.date} >= ${earliest}`, eq(s.calendarDays.isOperating, true), eq(s.calendarDays.dowName, outlet.deliveryWeekday.slice(0, 3)))).orderBy(asc(s.calendarDays.date)).limit(1);
+    if (days[0]) return { ...base, date: days[0].date, kind: 'weekly' as const, weekday: outlet.deliveryWeekday };
+  }
+  return { ...base, date: earliest, kind: outlet.brand === 'Tech' ? ('as_needed' as const) : ('daily' as const), weekday: null };
+}
+
+/** The order form for one outlet: its brand's products and when the order would be delivered. */
+export async function orderForm(outletId: string) {
+  const outlet = (await db.select().from(s.outlets).where(eq(s.outlets.id, outletId)))[0];
+  if (!outlet) throw new HttpError(404, 'Outlet not found');
+  const items = Object.fromEntries(Object.entries(CATALOGUE).filter(([, v]) => v.brand === outlet.brand));
+  return { outletId, brand: outlet.brand, items, delivery: await nextDeliveryFor(outlet) };
+}
 
 export async function placeStoreOrder(outletId: string, lines: { sku: string; qty: number }[]) {
   const outlet = (await db.select().from(s.outlets).where(eq(s.outlets.id, outletId)))[0];
   if (!outlet) throw new HttpError(404, 'Outlet not found');
-  const valid = lines.filter((l) => CATALOGUE[l.sku] && l.qty > 0);
-  if (!valid.length) throw new HttpError(400, 'Add at least one item');
-  const date = await nextOperatingDay(DEMO_DATE);
+  const valid = lines.filter((l) => CATALOGUE[l.sku]?.brand === outlet.brand && l.qty > 0);
+  if (!valid.length) throw new HttpError(400, lines.some((l) => CATALOGUE[l.sku] && l.qty > 0) ? `${outlet.id} is a ${outlet.brand} store; those items are not on its order list` : 'Add at least one item');
+  const { date } = await nextDeliveryFor(outlet);
   const created = [];
   for (const temp of ['chilled', 'ambient'] as const) {
     const ls = valid.filter((l) => CATALOGUE[l.sku].temp === temp);
@@ -140,6 +206,15 @@ export async function recordReceipt(outletId: string, stopId: string, body: { st
 // ---------- Offline sync ----------
 export interface SyncEventIn { id: string; kind: string; at: string; payload: Record<string, unknown> }
 
+/** Outside demo mode, a driver may only touch their own vehicle's trips and a loader only their depot's. */
+async function assertOwnTrip(session: Session, tripId: string | undefined) {
+  if (DEMO_MODE || !tripId) return;
+  const row = (await db.select({ vehicleId: s.trips.vehicleId, depot: s.plans.depot }).from(s.trips).innerJoin(s.plans, eq(s.trips.planId, s.plans.id)).where(eq(s.trips.id, tripId)))[0];
+  if (!row) throw new Error('Trip not found');
+  if (session.role === 'DRIVER' && row.vehicleId !== session.vehicleId) throw new Error('This trip is not on your vehicle');
+  if (session.role === 'LOADER' && row.depot !== session.depot) throw new Error('This trip is not at your depot');
+}
+
 /** Applies queued field events exactly once (idempotent by client event id). */
 export async function applyEvents(session: Session, events: SyncEventIn[]) {
   const results: { id: string; status: 'applied' | 'duplicate' | 'rejected'; message?: string; matched?: string }[] = [];
@@ -150,6 +225,11 @@ export async function applyEvents(session: Session, events: SyncEventIn[]) {
     try {
       const p = e.payload as Record<string, never>;
       const at = new Date(e.at);
+      // Field work moves the shared demo clock forward to when it happened (never backwards), before
+      // anything it triggers is recorded, so flags and notices carry the same story time.
+      if (e.kind !== 'driver.heartbeat' && !Number.isNaN(at.getTime())) await advanceTo(at);
+      const stopTrip = !p.tripId && p.stopId ? (await db.select({ tripId: s.stops.tripId }).from(s.stops).where(eq(s.stops.id, p.stopId)))[0]?.tripId : undefined;
+      await assertOwnTrip(session, (p.tripId as string | undefined) ?? stopTrip);
       switch (e.kind) {
         case 'loader.check': {
           if (session.role !== 'LOADER') throw new Error('Only loaders can load');
@@ -177,11 +257,18 @@ export async function applyEvents(session: Session, events: SyncEventIn[]) {
           break;
         }
         case 'driver.depart': {
-          await db.update(s.trips).set({ status: 'departed', departedAt: at, lastSyncAt: new Date() }).where(eq(s.trips.id, p.tripId));
+          await db.update(s.trips).set({ status: 'departed', departedAt: at, lastSyncAt: demoNow() }).where(eq(s.trips.id, p.tripId));
+          break;
+        }
+        case 'driver.arrive': {
+          // The truck reached a stop. Keep the first arrival time; completing the stop records the rest.
+          if (session.role !== 'DRIVER') throw new Error('Only drivers can arrive');
+          await db.update(s.stops).set({ arrivedAt: p.arrivedAt ? new Date(p.arrivedAt) : at }).where(and(eq(s.stops.id, p.stopId), eq(s.stops.status, 'pending'), sql`${s.stops.arrivedAt} IS NULL`));
+          await db.update(s.trips).set({ lastSyncAt: demoNow() }).where(eq(s.trips.id, p.tripId));
           break;
         }
         case 'driver.heartbeat': {
-          await db.update(s.trips).set({ lastSyncAt: new Date() }).where(eq(s.trips.id, p.tripId));
+          await db.update(s.trips).set({ lastSyncAt: demoNow() }).where(eq(s.trips.id, p.tripId));
           break;
         }
         case 'driver.stop': {
@@ -194,11 +281,11 @@ export async function applyEvents(session: Session, events: SyncEventIn[]) {
           await db.update(s.stops).set({
             status: outcome, arrivedAt: p.arrivedAt ? new Date(p.arrivedAt) : at, completedAt: at, receiverName: p.receiverName ?? null,
             signature: p.signature ?? null, photo: p.photo ?? null, deliveredUnits: p.deliveredUnits ?? null, note: p.note ?? null, gps: p.gps ?? null,
-            recordedOffline: !!p.offline, syncedAt: new Date(),
+            recordedOffline: !!p.offline, syncedAt: demoNow(),
           }).where(eq(s.stops.id, p.stopId));
           const map: Record<string, string> = { delivered: 'delivered', partial: 'partial', refused: 'refused', no_access: 'failed' };
           await db.update(s.orders).set({ status: map[outcome] ?? 'delivered' }).where(eq(s.orders.stopId, p.stopId));
-          await db.update(s.trips).set({ lastSyncAt: new Date(), status: 'departed' }).where(eq(s.trips.id, stop.tripId));
+          await db.update(s.trips).set({ lastSyncAt: demoNow(), status: 'departed' }).where(eq(s.trips.id, stop.tripId));
           const rec = (await db.select().from(s.receipts).where(eq(s.receipts.stopId, p.stopId)))[0];
           if (rec?.status === 'issue') matched = rec.matchedFlagId ? `The store reported "${rec.issueType} × ${rec.qty}" while you were offline. It matches the loader's flag, so there is nothing for you to do.` : `The store reported "${rec.issueType}". Your record and photo have been sent to the dispatcher.`;
           const remaining = (await db.select().from(s.stops).where(and(eq(s.stops.tripId, stop.tripId), eq(s.stops.status, 'pending')))).length;
@@ -211,7 +298,7 @@ export async function applyEvents(session: Session, events: SyncEventIn[]) {
     await db.insert(s.syncEvents).values({ id: e.id, userId: session.userId, kind: e.kind, payload: e.payload, clientAt: new Date(e.at), result: ok ? 'applied' : `rejected: ${message}` }).onConflictDoNothing();
     results.push({ id: e.id, status: ok ? 'applied' : 'rejected', message, matched });
   }
-  return { results, serverTime: new Date().toISOString() };
+  return { results, serverTime: demoNow().toISOString() };
 }
 
 // ---------- Live board ----------
@@ -227,7 +314,7 @@ export async function liveBoard(depot?: string) {
       return { kind: 'offline', rank: 2, title: `${t.vehicleId} · ${t.district}`, at: t.lastSyncAt, body: `No signal since ${t.lastSyncAt ? new Date(t.lastSyncAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Colombo' }) : 'departure'}. Last record: stop ${done.length} of ${t.stops.length}. Predicted next: ${next?.outletId ?? 'return to depot'}. Records are saving on the driver's phone.`, tripId: t.id };
     }),
     ...trips.filter((t) => t.status === 'departed' && !t.isOffline).flatMap((t) => t.stops.filter((x) => x.status === 'pending' && x.lateRisk > 0.3).map((x) => ({ kind: 'late', rank: 1, title: `${t.vehicleId} → ${x.outletId}`, at: null, body: `Late risk ${Math.round(x.lateRisk * 100)}%: planned ${String(Math.floor(x.etaMin / 60)).padStart(2, '0')}:${String(x.etaMin % 60).padStart(2, '0')}, window closes ${x.outlet.windowClose}.`, tripId: t.id }))),
-    ...notes.filter((n) => ['flag', 'issue', 'store_reply'].includes(n.kind)).map((n) => ({ kind: n.kind, rank: n.kind === 'issue' ? 1 : 3, title: n.title, at: n.createdAt, body: n.body, tripId: null })),
+    ...notes.filter((n) => ['flag', 'issue', 'store_reply', 'breakdown'].includes(n.kind)).map((n) => ({ kind: n.kind, rank: n.kind === 'issue' || n.kind === 'breakdown' ? 1 : 3, title: n.title, at: n.createdAt, body: n.body, tripId: null })),
     ...pendingRequests.map((d) => ({ kind: 'awaiting', rank: 4, title: 'Waiting for a store reply', at: d.decidedAt, body: `Asked the store to accept a later window for order ${d.orderId.slice(0, 8)}.`, tripId: null })),
   ].sort((a, b) => a.rank - b.rank);
   return {

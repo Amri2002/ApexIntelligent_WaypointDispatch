@@ -11,9 +11,13 @@ nextEnv.loadEnvConfig(new URL('..', import.meta.url).pathname);
 const url = process.env.DATABASE_URL;
 if (!url) { console.error('DATABASE_URL is not set'); process.exit(1); }
 
-const client = new pg.Client({ connectionString: url });
+// A pg.Client cannot be reused after a failed connect, so each attempt gets a fresh one.
+let client;
 for (let i = 0; i < 30; i++) {
+  client = new pg.Client({ connectionString: url });
+  client.on('error', (e) => console.error('[migrate] database connection error:', e.message));
   try { await client.connect(); break; } catch (e) {
+    await client.end().catch(() => {});
     if (i === 29) throw e;
     console.log('[migrate] waiting for database…'); await new Promise((r) => setTimeout(r, 2000));
   }

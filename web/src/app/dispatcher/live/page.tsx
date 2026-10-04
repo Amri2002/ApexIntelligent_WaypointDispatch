@@ -13,7 +13,7 @@ interface Live {
   trips: TripView[];
   exceptions: { kind: string; title: string; body: string; at: string | null }[];
 }
-const KIND: Record<string, [string, string]> = { offline: ['t-off', 'No signal'], late: ['t-warn', 'Late risk'], flag: ['t-bad', 'Loader flag'], issue: ['t-bad', 'Store issue'], store_reply: ['t-ok', 'Store reply'], awaiting: ['', 'Waiting'] };
+const KIND: Record<string, [string, string]> = { offline: ['t-off', 'No signal'], late: ['t-warn', 'Late risk'], flag: ['t-bad', 'Loader flag'], issue: ['t-bad', 'Store issue'], store_reply: ['t-ok', 'Store reply'], breakdown: ['t-bad', 'Breakdown'], awaiting: ['', 'Waiting'] };
 const STATUS: Record<string, [string, string]> = { planned: ['', 'Not loaded'], loading: ['t-warn', 'Loading'], sealed: ['t-ink', 'Sealed'], departed: ['t-ok', 'On the road'], completed: ['', 'Completed'] };
 
 export default function LivePage() {

@@ -77,19 +77,20 @@ await v.getByRole('button', { name: 'Start trip' }).waitFor(); await shot(v, 'v1
 await v.getByRole('button', { name: 'Start trip' }).click(); await v.waitForTimeout(1500);
 await v.getByRole('button', { name: /^Arrived at/ }).click();
 await v.getByPlaceholder('Name of store staff').fill('K. Perera');
-const pad = v.locator('canvas.sig'); const b = await pad.boundingBox();
+const pad = v.locator('canvas.sig'); await pad.evaluate((e) => e.scrollIntoView({ block: 'center' })); await v.waitForTimeout(200); const b = await pad.boundingBox();
 await v.mouse.move(b.x + 20, b.y + 60); await v.mouse.down(); await v.mouse.move(b.x + 120, b.y + 30, { steps: 8 }); await v.mouse.move(b.x + 200, b.y + 70, { steps: 8 }); await v.mouse.up();
 await shot(v, 'v2-stop');
 await v.getByRole('button', { name: /Complete stop/ }).click(); await v.waitForTimeout(1200);
 // Signal drops: simulate from the menu.
-await v.getByRole('button', { name: 'Connection and account' }).click();
-await v.getByRole('checkbox').check(); await v.getByRole('button', { name: 'Connection and account' }).click();
+await v.getByRole('button', { name: 'Connection status and Simulate no signal' }).click();
+await v.getByRole('checkbox').check(); await v.getByRole('button', { name: 'Connection status and Simulate no signal' }).click();
 let guard = 0;
 while (await v.getByPlaceholder('Name of store staff').count() === 0 && guard++ < 3) { const b2 = v.getByRole('button', { name: /^Arrived at/ }); if (await b2.count()) await b2.click(); }
 let first = true;
 for (let i = 0; i < 8; i++) {
   if (!(await v.getByPlaceholder('Name of store staff').count())) break;
   await v.getByPlaceholder('Name of store staff').fill('S. Kumar');
+  await v.locator('canvas.sig').evaluate((e) => e.scrollIntoView({ block: 'center' })); await v.waitForTimeout(200);
   const bb = await v.locator('canvas.sig').boundingBox();
   await v.mouse.move(bb.x + 20, bb.y + 60); await v.mouse.down(); await v.mouse.move(bb.x + 160, bb.y + 40, { steps: 6 }); await v.mouse.up();
   if (first) { await shot(v, 'g2-offline'); first = false; }
@@ -111,7 +112,7 @@ await m.getByRole('button', { name: 'Damaged' }).click(); await m.getByRole('but
 await m.getByRole('button', { name: 'Send report' }).click(); await m.waitForTimeout(1500); await shot(m, 'm3-receipt');
 
 step('Driver reconnects: sync report');
-await v.getByRole('button', { name: 'Connection and account' }).click();
+await v.getByRole('button', { name: 'Connection status and Simulate no signal' }).click();
 await v.getByRole('checkbox').uncheck();
 const synced = await v.waitForResponse((r) => r.url().includes('/api/sync'), { timeout: 20000 }).catch(() => null);
 console.log('  sync response:', synced ? synced.status() : 'none'); await v.waitForTimeout(2000);

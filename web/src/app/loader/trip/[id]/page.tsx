@@ -7,7 +7,11 @@ import { api } from '@/lib/client/api';
 import { cached, enqueue, useOutbox } from '@/lib/client/outbox';
 import { compressPhoto } from '@/lib/client/image';
 import type { TripView } from '@/lib/opsService';
-import { fmt } from '@/lib/time';
+import { fmt, DEMO_DATE } from '@/lib/time';
+import { planTime } from '@/lib/client/clock';
+
+// In the demo, loading starts about 40 minutes before the planned departure.
+const loadingTime = (t: TripView) => planTime(DEMO_DATE, t.startMin - 40);
 
 const ISSUES = [['missing', 'Missing'], ['damaged', 'Damaged'], ['short_picked', 'Short-picked'], ['wrong_temperature', 'Wrong temperature']] as const;
 const ITEMS = ['Yoghurt 80 g × 24 (carton)', 'Fresh milk 1 L (crate)', 'Butter 200 g (case)', 'Cheese slices (case)', 'Dry goods carton', 'Other item'];
@@ -65,7 +69,7 @@ export default function LoadTrip({ params }: { params: Promise<{ id: string }> }
                 {!sealed && <button className="btn btn-sm btn-s" style={{ alignSelf: 'flex-start' }} onClick={() => setFlagFor(s)}><Icon name="alert" size={14} />Flag a problem</button>}
               </div>
               <button className={`ck ${fq ? 'fl' : on ? 'on' : ''}`} role="checkbox" aria-checked={on} aria-label={`Stop ${s.seq} loaded`} disabled={sealed}
-                onClick={() => void enqueue('loader.check', { tripId: trip.id, stopId: s.id, loaded: !on })}>
+                onClick={() => void enqueue('loader.check', { tripId: trip.id, stopId: s.id, loaded: !on }, loadingTime(trip))}>
                 {fq ? <Icon name="alert" size={24} /> : on ? <Icon name="check" size={26} /> : null}
               </button>
             </div>
@@ -74,7 +78,7 @@ export default function LoadTrip({ params }: { params: Promise<{ id: string }> }
       </main>
       <footer className="pfoot">
         <div className="row" style={{ justifyContent: 'space-between', fontSize: 13 }}><span><b>{done} of {stops.length} loaded</b>{trip.flags.length + local.flagged.size ? ` · ${trip.flags.length + local.flagged.size} flag` : ''}</span><span className="muted">Works without Wi-Fi</span></div>
-        <button className="btn btn-p btn-lg" disabled={sealed || done < stops.length} onClick={() => void enqueue('loader.seal', { tripId: trip.id })}>
+        <button className="btn btn-p btn-lg" disabled={sealed || done < stops.length} onClick={() => void enqueue('loader.seal', { tripId: trip.id }, loadingTime(trip))}>
           {sealed ? <><Icon name="check" />Sealed and handed over</> : done < stops.length ? `Seal and hand over · ${stops.length - done} stop${stops.length - done > 1 ? 's' : ''} left` : 'Seal and hand over to the driver'}
         </button>
       </footer>
@@ -115,7 +119,7 @@ function FlagSheet({ trip, stop, onClose }: { trip: TripView; stop: TripView['st
             <div className="row" style={{ fontSize: 13.5, alignItems: 'flex-start' }}><Icon name="store" /><span>The store is told before the truck arrives</span></div>
           </div>
         </main>
-        <footer className="pfoot"><button className="btn btn-w btn-lg" onClick={async () => { await enqueue('loader.flag', { tripId: trip.id, stopId: stop.id, item, issueType: issue, qty, note: note || undefined, photo: photo || undefined }); onClose(); }}>Send flag</button></footer>
+        <footer className="pfoot"><button className="btn btn-w btn-lg" onClick={async () => { await enqueue('loader.flag', { tripId: trip.id, stopId: stop.id, item, issueType: issue, qty, note: note || undefined, photo: photo || undefined }, loadingTime(trip)); onClose(); }}>Send flag</button></footer>
       </div>
     </div>
   );

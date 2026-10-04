@@ -7,6 +7,7 @@ services:
     name: waypoint-dispatch
     runtime: docker
     plan: free
+    region: singapore    # keep it next to the Neon database (AWS ap-southeast-1, Singapore)
     dockerfilePath: ./Dockerfile
     healthCheckPath: /login
     envVars:

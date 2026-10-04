@@ -5,27 +5,38 @@ import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '@/components/Icon';
 import { api } from '@/lib/client/api';
 import { prettyDate } from '@/lib/time';
+import { useStoryNow } from '@/lib/client/clock';
 
 type Cat = Record<string, { name: string; pack: string; temp: 'chilled' | 'ambient'; kg: number; m3: number }>;
-const DEFAULTS: Record<string, number> = { milk: 10, yoghurt: 12, cheese: 4, butter: 8, rice: 6, flour: 4, tea: 3, biscuits: 6 };
+interface Form { brand: string; items: Cat; delivery: { date: string; kind: 'daily' | 'weekly' | 'as_needed'; weekday: string | null; afterCutoff: boolean } }
+// Suggested quantities (what this store usually orders).
+const DEFAULTS: Record<string, number> = { milk: 10, yoghurt: 12, cheese: 4, butter: 8, rice: 6, flour: 4, tea: 3, biscuits: 6, folded: 12, hanging: 8, footwear: 6, fridge: 1, washer: 1, tv: 2, aircon: 0 };
 
 export default function OrderPage() {
   const [cat, setCat] = useState<Cat | null>(null);
+  const [delivery, setDelivery] = useState<Form['delivery'] | null>(null);
   const [tab, setTab] = useState<'chilled' | 'ambient'>('chilled');
   const [qty, setQty] = useState<Record<string, number>>(DEFAULTS);
   const [outlet, setOutlet] = useState<string | null>(null);
   const [brand, setBrand] = useState('Fresh');
   const [done, setDone] = useState<{ refs: string[]; date: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => { api<Cat>('/api/store/orders').then(setCat); const o = localStorage.getItem('wp-store-outlet'); setOutlet(o); api<{ outlet: { brand: string; id: string } }>(`/api/store/overview${o ? `?outlet=${o}` : ''}`).then((x) => { setBrand(x.outlet.brand); setOutlet(x.outlet.id); if (x.outlet.brand !== 'Fresh') setTab('ambient'); }); const t = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(t); }, []);
+  const now = useStoryNow(30_000); // demo clock; null until mounted, so server and browser render the same HTML
+  useEffect(() => { const o = localStorage.getItem('wp-store-outlet'); setOutlet(o); api<Form>(`/api/store/orders${o ? `?outlet=${o}` : ''}`).then((f) => { setCat(f.items); setDelivery(f.delivery); if (f.brand !== 'Fresh') setTab('ambient'); }); api<{ outlet: { brand: string; id: string } }>(`/api/store/overview${o ? `?outlet=${o}` : ''}`).then((x) => { setBrand(x.outlet.brand); setOutlet(x.outlet.id); if (x.outlet.brand !== 'Fresh') setTab('ambient'); });  }, []);
 
   // Cutoff countdown to 16:00 Sri Lanka time today.
-  const left = useMemo(() => {
-    const sl = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Colombo' }));
-    const m = 16 * 60 - (sl.getHours() * 60 + sl.getMinutes());
-    return m > 0 ? `${Math.floor(m / 60)} h ${m % 60} min left` : 'closed for today — this goes on the next run';
+  const minsLeft = useMemo(() => {
+    if (!now) return null;
+    const sl = new Date(now.getTime() + 330 * 60_000); // Asia/Colombo is UTC+05:30
+    return 16 * 60 - (sl.getUTCHours() * 60 + sl.getUTCMinutes());
   }, [now]);
+  const closed = minsLeft != null && minsLeft <= 0;
+  const left = minsLeft == null ? '…' : closed ? 'closed for today' : `${Math.floor(minsLeft / 60)} h ${minsLeft % 60} min left`;
+  // When the clock passes 16:00 with the form open, ask the server for the new delivery date.
+  useEffect(() => {
+    if (minsLeft == null || !delivery || delivery.afterCutoff === closed) return;
+    api<Form>(`/api/store/orders${outlet ? `?outlet=${outlet}` : ''}`).then((f) => setDelivery(f.delivery)).catch(() => {});
+  }, [closed, minsLeft, delivery, outlet]);
   const items = Object.entries(cat ?? {}).filter(([, v]) => v.temp === tab);
   const units = items.reduce((a, [k]) => a + (qty[k] ?? 0), 0);
   const m3 = items.reduce((a, [k, v]) => a + (qty[k] ?? 0) * v.m3, 0);
@@ -41,10 +52,19 @@ export default function OrderPage() {
       <header className="appbar">
         <Link href="/store" aria-label="Back" style={{ width: 44, height: 44, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'inherit', marginLeft: -10 }}><Icon name="back" size={20} /></Link>
         <div className="col" style={{ gap: 0 }}><span className="lbl">Waypoint {brand} · <span className="mono">{outlet}</span></span><span className="h" style={{ fontSize: 18, fontWeight: 700 }}>Place order</span></div>
-        <span className="muted right" style={{ fontSize: 13, fontWeight: 600 }}>EN · தமிழ்</span>
       </header>
       <main className="pbody">
-        <div className="banner" style={{ background: 'var(--ink)', color: '#fff' }}><Icon name="clock" size={24} style={{ color: 'var(--brand)' }} /><div style={{ fontSize: 14 }}><b>Orders close at 16:00 · {left}</b><div style={{ color: '#D9D7D0', fontSize: 13 }}>Orders after 16:00 go on the following run</div></div></div>
+        <div className="banner" style={{ background: 'var(--ink)', color: '#fff' }}><Icon name="clock" size={24} style={{ color: 'var(--brand)' }} /><div style={{ fontSize: 14 }}><b>Orders close at 16:00 · {left}</b><div style={{ color: '#D9D7D0', fontSize: 13 }}>{closed ? 'Tomorrow\'s run is already being planned, so a new order goes on the run after it.' : 'Orders after 16:00 miss the next run and go on the one after it.'}</div></div></div>
+        {delivery && !done && (
+          <div className="blk" style={{ flexDirection: 'row', alignItems: 'flex-start', background: '#EEF4FA', borderColor: '#BFD3E6' }}>
+            <Icon name="truck" size={20} />
+            <span style={{ fontSize: 14 }}>
+              {delivery.kind === 'weekly' ? <><b>Weekly delivery on {delivery.weekday}s.</b> This order arrives on {prettyDate(delivery.date, { weekday: 'long', day: 'numeric', month: 'long' })}.</>
+                : delivery.kind === 'as_needed' ? <><b>Delivered as needed.</b> This order goes on the next run, {prettyDate(delivery.date, { weekday: 'long', day: 'numeric', month: 'long' })}, during trading hours. Heavy items need two people to receive.</>
+                : <><b>Daily delivery before you open at 8 AM.</b> This order arrives {prettyDate(delivery.date, { weekday: 'long', day: 'numeric', month: 'long' })}.</>}
+            </span>
+          </div>
+        )}
         {done ? (
           <div className="blk" style={{ borderColor: 'var(--ok)' }}>
             <span className="tag t-ok" style={{ alignSelf: 'flex-start' }}><Icon name="check" size={13} />Order confirmed</span>
@@ -57,7 +77,7 @@ export default function OrderPage() {
           <div className="blk" style={{ gap: 0, padding: '2px 14px' }}>
             {items.map(([k, v]) => (
               <div key={k} className="row" style={{ padding: '10px 0', borderBottom: '1px solid var(--line-soft)' }}>
-                <div className="grow"><b>{v.name}</b><div className="muted" style={{ fontSize: 12.5 }}>{v.pack} · last week {DEFAULTS[k]}</div></div>
+                <div className="grow"><b>{v.name}</b><div className="muted" style={{ fontSize: 12.5 }}>{v.pack}{DEFAULTS[k] ? ` · usually ${DEFAULTS[k]}` : ''}</div></div>
                 <div className="stepper"><button onClick={() => setQty({ ...qty, [k]: Math.max(0, (qty[k] ?? 0) - 1) })} aria-label={`Fewer ${v.name}`}>−</button><span>{qty[k] ?? 0}</span><button onClick={() => setQty({ ...qty, [k]: (qty[k] ?? 0) + 1 })} aria-label={`More ${v.name}`}>+</button></div>
               </div>
             ))}
@@ -66,7 +86,7 @@ export default function OrderPage() {
           {err && <div className="tag t-bad" role="alert">{err}</div>}
         </>}
       </main>
-      {!done && <footer className="pfoot"><button className="btn btn-p btn-lg" disabled={!units} onClick={send}>Send {tab === 'chilled' ? 'chilled' : 'dry goods'} order</button><span className="muted" style={{ fontSize: 12.5, textAlign: 'center' }}>You get a reference number straight away</span></footer>}
+      {!done && <footer className="pfoot"><button className="btn btn-p btn-lg" disabled={!units} onClick={send}>{brand === 'Fresh' ? `Send ${tab === 'chilled' ? 'chilled' : 'dry goods'} order` : 'Send order'}</button><span className="muted" style={{ fontSize: 12.5, textAlign: 'center' }}>You get a reference number straight away</span></footer>}
     </div>
   );
 }

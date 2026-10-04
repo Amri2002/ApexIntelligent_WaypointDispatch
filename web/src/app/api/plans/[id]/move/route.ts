@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server';
 import { requireRole, HttpError } from '@/lib/auth';
+import { loadClock } from '@/lib/clock';
 import { moveOrder } from '@/lib/planService';
 
 /** Manual edit: move an order onto a vehicle, or take it off the plan. Rejected with reasons if it breaks a rule. */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
     await requireRole('DISPATCHER');
+    await loadClock();
     const { orderId, vehicleId, unplace } = await req.json();
     return NextResponse.json(await moveOrder((await ctx.params).id, orderId, { vehicleId, unplace }));
   } catch (e) {

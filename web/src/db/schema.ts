@@ -5,6 +5,9 @@ import { pgTable, text, integer, doublePrecision, boolean, timestamp, jsonb, pri
 
 const id = () => text('id').primaryKey().$defaultFn(() => crypto.randomUUID());
 const ts = (name: string) => timestamp(name, { withTimezone: true });
+import { demoNow } from '../lib/clockState';
+/** created_at stamped with the demo clock's story time (real time outside demo mode). */
+const createdAt = () => ts('created_at').notNull().defaultNow().$defaultFn(() => demoNow());
 
 export const users = pgTable('users', {
   id: id(),
@@ -15,7 +18,7 @@ export const users = pgTable('users', {
   depot: text('depot'),
   vehicleId: text('vehicle_id'),
   outletId: text('outlet_id'),
-  createdAt: ts('created_at').defaultNow().notNull(),
+  createdAt: createdAt(),
 });
 
 // ---------- Reference data (from the shared datasets) ----------
@@ -27,6 +30,8 @@ export const outlets = pgTable('outlets', {
   dockType: text('dock_type').notNull(),
   parkingConstraint: text('parking_constraint').notNull(),
   mallWindow: text('mall_window'),
+  /** Style outlets: the weekday their weekly delivery runs (from the delivery history). Null for Fresh and Tech. */
+  deliveryWeekday: text('delivery_weekday'),
   windowOpen: text('window_open').notNull(),
   windowClose: text('window_close').notNull(),
 });
@@ -96,7 +101,7 @@ export const plans = pgTable('plans', {
   depot: text('depot').notNull(),
   date: text('date').notNull(),
   status: text('status').notNull().default('draft'), // draft | published
-  createdAt: ts('created_at').defaultNow().notNull(),
+  createdAt: createdAt(),
   updatedAt: ts('updated_at').defaultNow().notNull(),
   publishedAt: ts('published_at'),
   publishedBy: text('published_by'),
@@ -165,7 +170,7 @@ export const orders = pgTable('orders', {
   lines: jsonb('lines'),
   parentRef: text('parent_ref'),
   stopId: text('stop_id').references(() => stops.id, { onDelete: 'set null' }),
-  createdAt: ts('created_at').defaultNow().notNull(),
+  createdAt: createdAt(),
 }, (t) => [index('orders_date_depot').on(t.deliveryDate, t.depot)]);
 
 export const deferrals = pgTable('deferrals', {
@@ -181,7 +186,7 @@ export const deferrals = pgTable('deferrals', {
   decidedBy: text('decided_by'),
   decidedAt: ts('decided_at'),
   storeImpact: text('store_impact'),
-  createdAt: ts('created_at').defaultNow().notNull(),
+  createdAt: createdAt(),
 });
 
 export const loadFlags = pgTable('load_flags', {
@@ -194,7 +199,7 @@ export const loadFlags = pgTable('load_flags', {
   note: text('note'),
   photo: text('photo'),
   createdBy: text('created_by').notNull(),
-  createdAt: ts('created_at').defaultNow().notNull(),
+  createdAt: createdAt(),
   resolved: boolean('resolved').notNull().default(false),
 });
 
@@ -207,7 +212,7 @@ export const receipts = pgTable('receipts', {
   note: text('note'),
   photo: text('photo'),
   matchedFlagId: text('matched_flag_id'),
-  createdAt: ts('created_at').defaultNow().notNull(),
+  createdAt: createdAt(),
 });
 
 export const notifications = pgTable('notifications', {
@@ -218,7 +223,7 @@ export const notifications = pgTable('notifications', {
   body: text('body').notNull(),
   refId: text('ref_id'),
   response: text('response'),
-  createdAt: ts('created_at').defaultNow().notNull(),
+  createdAt: createdAt(),
   readAt: ts('read_at'),
 });
 
@@ -231,4 +236,10 @@ export const syncEvents = pgTable('sync_events', {
   clientAt: ts('client_at').notNull(),
   receivedAt: ts('received_at').defaultNow().notNull(),
   result: text('result').notNull(),
+});
+
+/** Small key/value settings (currently the demo clock). */
+export const appSettings = pgTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: jsonb('value').notNull(),
 });
