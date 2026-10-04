@@ -15,7 +15,7 @@ One responsive web app serves all four roles:
 | Driver | Phone | Today's run · Stop with proof of delivery · Sync report (offline-first) |
 | Store manager | Phone | Delivery ETA · Receipt or issue report · Deferral notice · Place order |
 
-**Live demo:** `<add the deployed URL here>` · **Video:** `<add the video link here>`
+**Live demo:** https://waypoint-dispatch.onrender.com (free hosting: the first load after a quiet spell can take up to a minute while the server wakes; everyone shares one demo, so press **Reset demo day** in the dispatcher sidebar to start fresh) · **Video:** `<add the video link here>`
 
 ---
 
@@ -24,7 +24,7 @@ One responsive web app serves all four roles:
 You only need Docker:
 
 ```bash
-git clone <repo-url> ApexIntelligent_WaypointDispatch
+git clone https://github.com/Amri2002/ApexIntelligent_WaypointDispatch.git
 cd ApexIntelligent_WaypointDispatch
 docker compose up --build
 ```
