@@ -8,7 +8,7 @@ import { prettyDate } from '@/lib/time';
 import { useStoryNow } from '@/lib/client/clock';
 
 type Cat = Record<string, { name: string; pack: string; temp: 'chilled' | 'ambient'; kg: number; m3: number }>;
-interface Form { brand: string; items: Cat; delivery: { date: string; kind: 'daily' | 'weekly' | 'as_needed'; weekday: string | null } }
+interface Form { brand: string; items: Cat; delivery: { date: string; kind: 'daily' | 'weekly' | 'as_needed'; weekday: string | null; afterCutoff: boolean } }
 // Suggested quantities (what this store usually orders).
 const DEFAULTS: Record<string, number> = { milk: 10, yoghurt: 12, cheese: 4, butter: 8, rice: 6, flour: 4, tea: 3, biscuits: 6, folded: 12, hanging: 8, footwear: 6, fridge: 1, washer: 1, tv: 2, aircon: 0 };
 
@@ -25,12 +25,18 @@ export default function OrderPage() {
   useEffect(() => { const o = localStorage.getItem('wp-store-outlet'); setOutlet(o); api<Form>(`/api/store/orders${o ? `?outlet=${o}` : ''}`).then((f) => { setCat(f.items); setDelivery(f.delivery); if (f.brand !== 'Fresh') setTab('ambient'); }); api<{ outlet: { brand: string; id: string } }>(`/api/store/overview${o ? `?outlet=${o}` : ''}`).then((x) => { setBrand(x.outlet.brand); setOutlet(x.outlet.id); if (x.outlet.brand !== 'Fresh') setTab('ambient'); });  }, []);
 
   // Cutoff countdown to 16:00 Sri Lanka time today.
-  const left = useMemo(() => {
-    if (!now) return '…';
-    const sl = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Colombo' }));
-    const m = 16 * 60 - (sl.getHours() * 60 + sl.getMinutes());
-    return m > 0 ? `${Math.floor(m / 60)} h ${m % 60} min left` : 'closed for today — this goes on the next run';
+  const minsLeft = useMemo(() => {
+    if (!now) return null;
+    const sl = new Date(now.getTime() + 330 * 60_000); // Asia/Colombo is UTC+05:30
+    return 16 * 60 - (sl.getUTCHours() * 60 + sl.getUTCMinutes());
   }, [now]);
+  const closed = minsLeft != null && minsLeft <= 0;
+  const left = minsLeft == null ? '…' : closed ? 'closed for today' : `${Math.floor(minsLeft / 60)} h ${minsLeft % 60} min left`;
+  // When the clock passes 16:00 with the form open, ask the server for the new delivery date.
+  useEffect(() => {
+    if (minsLeft == null || !delivery || delivery.afterCutoff === closed) return;
+    api<Form>(`/api/store/orders${outlet ? `?outlet=${outlet}` : ''}`).then((f) => setDelivery(f.delivery)).catch(() => {});
+  }, [closed, minsLeft, delivery, outlet]);
   const items = Object.entries(cat ?? {}).filter(([, v]) => v.temp === tab);
   const units = items.reduce((a, [k]) => a + (qty[k] ?? 0), 0);
   const m3 = items.reduce((a, [k, v]) => a + (qty[k] ?? 0) * v.m3, 0);
@@ -48,7 +54,7 @@ export default function OrderPage() {
         <div className="col" style={{ gap: 0 }}><span className="lbl">Waypoint {brand} · <span className="mono">{outlet}</span></span><span className="h" style={{ fontSize: 18, fontWeight: 700 }}>Place order</span></div>
       </header>
       <main className="pbody">
-        <div className="banner" style={{ background: 'var(--ink)', color: '#fff' }}><Icon name="clock" size={24} style={{ color: 'var(--brand)' }} /><div style={{ fontSize: 14 }}><b>Orders close at 16:00 · {left}</b><div style={{ color: '#D9D7D0', fontSize: 13 }}>Orders after 16:00 go on the following run</div></div></div>
+        <div className="banner" style={{ background: 'var(--ink)', color: '#fff' }}><Icon name="clock" size={24} style={{ color: 'var(--brand)' }} /><div style={{ fontSize: 14 }}><b>Orders close at 16:00 · {left}</b><div style={{ color: '#D9D7D0', fontSize: 13 }}>{closed ? 'Tomorrow\'s run is already being planned, so a new order goes on the run after it.' : 'Orders after 16:00 miss the next run and go on the one after it.'}</div></div></div>
         {delivery && !done && (
           <div className="blk" style={{ flexDirection: 'row', alignItems: 'flex-start', background: '#EEF4FA', borderColor: '#BFD3E6' }}>
             <Icon name="truck" size={20} />

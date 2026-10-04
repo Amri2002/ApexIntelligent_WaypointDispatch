@@ -120,16 +120,34 @@ const CATALOGUE: Record<string, Item> = {
   aircon: { brand: 'Tech', name: 'Inverter air conditioner', pack: 'Indoor + outdoor set', temp: 'ambient', kg: 75, m3: 0.6 },
 };
 
+/** Orders close at 16:00 Sri Lanka time for the next run. */
+export const CUTOFF_MIN = 16 * 60;
+
+/** Story date (YYYY-MM-DD) and minute of day in Sri Lanka time. */
+function colomboNow() {
+  const sl = new Date(demoNow().getTime() + 330 * 60_000); // Asia/Colombo is UTC+05:30 all year
+  return { date: sl.toISOString().slice(0, 10), minute: sl.getUTCHours() * 60 + sl.getUTCMinutes() };
+}
+
 /**
- * When a new order from this outlet is delivered, following its brand's schedule (booklet p.3):
- * Fresh and Tech go on the next run; Style goes on the outlet's weekly delivery day.
+ * When a new order from this outlet is delivered, following its brand's schedule (booklet p.3)
+ * and the 16:00 cutoff. Before the cutoff the earliest run is the next operating day; after it,
+ * that run is already being planned, so the earliest is the operating day after. Fresh and Tech
+ * go on the earliest run; Style goes on the outlet's weekly day, on or after the earliest run.
  */
 async function nextDeliveryFor(outlet: typeof s.outlets.$inferSelect) {
+  const now = colomboNow();
+  const afterCutoff = now.minute >= CUTOFF_MIN;
+  let earliest = await nextOperatingDay(now.date);
+  if (afterCutoff) earliest = await nextOperatingDay(earliest);
+  // The demo day itself is already planned and published, so never put a new order on it.
+  if (DEMO_MODE && earliest <= DEMO_DATE) earliest = await nextOperatingDay(DEMO_DATE);
+  const base = { cutoff: '16:00', afterCutoff, orderDay: now.date };
   if (outlet.brand === 'Style' && outlet.deliveryWeekday) {
-    const days = await db.select().from(s.calendarDays).where(and(sql`${s.calendarDays.date} > ${DEMO_DATE}`, eq(s.calendarDays.isOperating, true), eq(s.calendarDays.dowName, outlet.deliveryWeekday.slice(0, 3)))).orderBy(asc(s.calendarDays.date)).limit(1);
-    if (days[0]) return { date: days[0].date, kind: 'weekly' as const, weekday: outlet.deliveryWeekday };
+    const days = await db.select().from(s.calendarDays).where(and(sql`${s.calendarDays.date} >= ${earliest}`, eq(s.calendarDays.isOperating, true), eq(s.calendarDays.dowName, outlet.deliveryWeekday.slice(0, 3)))).orderBy(asc(s.calendarDays.date)).limit(1);
+    if (days[0]) return { ...base, date: days[0].date, kind: 'weekly' as const, weekday: outlet.deliveryWeekday };
   }
-  return { date: await nextOperatingDay(DEMO_DATE), kind: outlet.brand === 'Tech' ? ('as_needed' as const) : ('daily' as const), weekday: null };
+  return { ...base, date: earliest, kind: outlet.brand === 'Tech' ? ('as_needed' as const) : ('daily' as const), weekday: null };
 }
 
 /** The order form for one outlet: its brand's products and when the order would be delivered. */

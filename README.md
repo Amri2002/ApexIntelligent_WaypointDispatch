@@ -97,7 +97,7 @@ Use a desktop window for the dispatcher. For the other roles, use a phone or a n
 12. On the driver's phone, switch **Simulate no signal** off. Queued records replay in order and exactly once. The **sync report** lists what was sent and shows that the store's damage report was automatically matched to the loader's flag, so the driver has nothing to do.
 
 **Deferral from the store's side, and the forecast**
-13. In the store app, use the **Outlet (demo)** picker to choose an outlet deferred in step 4. It sees the notice with the reason and new date, and can reply (for example, **Chiller will be empty**). **Place order** shows the 16:00 cutoff countdown and returns a reference number at once.
+13. In the store app, use the **Outlet (demo)** picker to choose an outlet deferred in step 4. It sees the notice with the reason and new date, and can reply (for example, **Chiller will be empty**). **Place order** shows the 16:00 cutoff countdown and returns a reference number at once. The cutoff is enforced with the demo clock: before 16:00 an order goes on the next operating day (Fresh and Tech) or the store's next weekly day (Style). After 16:00 the next run is already being planned, so it goes one operating day later. To see it, press **Set… 16:05** in the dispatcher sidebar: an OUT106 order then moves from Sat 11 April to Wed 15 April, because 12–14 April are not operating days. Do this after step 16, because the next-run step expects the order on Sat 11 April.
 14. Dispatcher **Forecast**: weekly chilled demand as a share of reefer capacity for the next 10 weeks, with festival weeks marked and a workshop-timing recommendation.
 
 **When something breaks: a truck breaks down after publishing**

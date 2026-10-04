@@ -72,6 +72,7 @@ The demo day is fixed (Fri 10 April 2026), so the app cannot use the wall clock.
 * **Field actions move it forward.** A synced event with a later timestamp advances the clock to that time before the event is applied. The phones stamp events with realistic times: loading at departure − 40 min, **Start trip** at the planned start, a stop's arrival at max(story time, planned ETA), and completion after the predicted service time.
 * **Presenter control.** `POST /api/clock` (dispatcher only) adds minutes or sets a time, forward only and at most 3 days ahead. The sidebar buttons call it.
 * **Offline.** Phones cache the offset in local storage and keep counting without signal. While records are waiting in the outbox, a phone never takes an earlier time from the server, so queued records stay in order.
+* **Order cutoff.** A store order placed before 16:00 (story time, Sri Lanka) goes on the next operating day; after 16:00 it goes one operating day later. Style orders go on the store's weekly day, on or after that date (`nextDeliveryFor()` in `opsService.ts`).
 * **Real use.** With `DEMO_MODE=false` the offset is always zero, and `POST /api/clock` returns 409.
 
 ## Security
