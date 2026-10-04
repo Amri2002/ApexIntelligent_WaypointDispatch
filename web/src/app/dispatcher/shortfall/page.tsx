@@ -2,7 +2,7 @@
 // G1 · Cold-chain shortfall — the dispatcher decides which unplaced orders wait, and why. Every decision is recorded and the store is told.
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { DispatcherShell, DepotSwitch, useDepot, Toast, brandTag } from '@/components/DispatcherShell';
+import { DispatcherShell, DepotSwitch, useDepot, DaySwitch, usePlanDate, Toast, brandTag } from '@/components/DispatcherShell';
 import { Icon } from '@/components/Icon';
 import { api } from '@/lib/client/api';
 import type { PlanView } from '@/lib/planService';
@@ -20,6 +20,7 @@ const REASONS: Record<string, string> = {
 
 export default function ShortfallPage() {
   const [depot, setDepot] = useDepot();
+  const [date, day, setDay, days] = usePlanDate();
   const [view, setView] = useState<PlanView | null>(null);
   const [actions, setActions] = useState<Record<string, 'defer' | 'request_window'>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -27,7 +28,7 @@ export default function ShortfallPage() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ msg: string; bad?: boolean } | null>(null);
 
-  const load = useCallback(() => api<PlanView>(`/api/plans?depot=${depot}`).then((v) => {
+  const load = useCallback(() => { if (!date) return; return api<PlanView>(`/api/plans?depot=${depot}&date=${date}`).then((v) => {
     setView(v);
     const a: Record<string, 'defer' | 'request_window'> = {};
     v.deferred.forEach((d) => { a[d.orderId] = d.suggestion ? 'request_window' : 'defer'; });
@@ -35,7 +36,7 @@ export default function ShortfallPage() {
     const codes = v.deferred.filter((d) => d.status === 'proposed').map((d) => d.reasonCode);
     const top = codes.sort((x, y) => codes.filter((c) => c === y).length - codes.filter((c) => c === x).length)[0];
     setReason(REASONS[top ?? 'FLEET_CAPACITY'] ?? REASONS.FLEET_CAPACITY);
-  }), [depot]);
+  }); }, [depot, date]);
   useEffect(() => { void load(); }, [load]);
 
   const proposed = useMemo(() => (view?.deferred ?? []).filter((d) => d.status === 'proposed'), [view]);
@@ -69,7 +70,7 @@ export default function ShortfallPage() {
         <Link href="/dispatcher/plan" aria-label="Back to plan" style={{ color: 'var(--ink)', display: 'inline-flex' }}><Icon name="back" size={22} /></Link>
         <h1 style={{ fontSize: 20, fontWeight: 700 }}>{t && t.chilledPlacedM3 < t.chilledM3 ? 'Cold-chain shortfall' : 'Unplaced orders'} · {view ? prettyDate(view.date, { weekday: 'long', day: 'numeric', month: 'long' }) : ''} · {depot}</h1>
         {proposed.length > 0 ? <span className="tag t-bad">Needs your decision before publishing</span> : view?.plan ? <span className="tag t-ok">All decided</span> : null}
-        <div className="row right"><DepotSwitch depot={depot} onChange={setDepot} /></div>
+        <div className="row right" style={{ gap: 10 }}><DaySwitch day={day} onChange={setDay} days={days} /><DepotSwitch depot={depot} onChange={setDepot} /></div>
       </header>
       {!view?.plan ? <div className="content"><div className="card" style={{ padding: 20 }}>No plan yet. <Link href="/dispatcher">Build the plan</Link> first.</div></div> : (
         <div className="content" style={{ flexDirection: 'row', alignItems: 'flex-start', flexWrap: 'wrap' }}>
@@ -122,7 +123,7 @@ export default function ShortfallPage() {
           <aside className="col" style={{ width: 380, gap: 12 }}>
             <div className="card" style={{ padding: '14px 16px' }}>
               <div className="lbl" style={{ marginBottom: 2 }}>If you confirm</div>
-              <Cq icon="check" b={`${toDefer.length} orders (${toDefer.reduce((a, d) => a + d.order.volumeM3, 0).toFixed(1)} m³) move to ${nextDate ? prettyDate(nextDate) : 'the next run'}`} t="locked into the first wave so they cannot slip twice. Their other orders still go today." />
+              <Cq icon="check" b={`${toDefer.length} orders (${toDefer.reduce((a, d) => a + d.order.volumeM3, 0).toFixed(1)} m³) move to ${nextDate ? prettyDate(nextDate) : 'the next run'}`} t="placed first on the next run; deferring one again needs a written note. Their other orders still go today." />
               <Cq icon="phone" b={`${new Set(toDefer.map((d) => d.outlet.id)).size} store managers get a deferral notice now`} t="with the reason and the new date, before they roster tomorrow’s staff." />
               {toAsk.length > 0 && <Cq icon="clock" b={`${toAsk.length} stores are asked for a later window`} t="A yes places the order on the suggested vehicle; a no defers it automatically." />}
               <Cq icon="alert" red b="The next run carries this volume" t={`on top of its own orders. Check the forecast before releasing workshop vehicles.`} link />

@@ -95,6 +95,9 @@ Use a desktop window for the dispatcher. For the other roles, use a phone or a n
 13. In the store app, use the **Outlet (demo)** picker to choose an outlet deferred in step 4. It sees the notice with the reason and new date, and can reply (for example, **Chiller will be empty**). **Place order** shows the 16:00 cutoff countdown and returns a reference number at once.
 14. Dispatcher **Forecast**: weekly chilled demand as a share of reefer capacity for the next 10 weeks, with festival weeks marked and a workshop-timing recommendation.
 
+**The next run: closing the loop**
+15. As the dispatcher, switch the day at the top right from **Fri, 10 Apr** to **Sat, 11 Apr · next run**. The **Orders** queue now holds the orders deferred in step 4, which go first, plus the order the store placed in step 13. Press **Build plan for Sat, 11 Apr**. The same engine and rules apply, and the 5 reefers are still in the workshop, so the plan shows honestly which deferred orders still cannot fit. Deferring one of them a second time requires a written note. (Only the dispatcher screens switch days; the loader, driver and store apps stay on 10 April.)
+
 ## 4. How it works
 
 * [Architecture and offline design](docs/architecture.md), including the [diagram](docs/architecture.svg).

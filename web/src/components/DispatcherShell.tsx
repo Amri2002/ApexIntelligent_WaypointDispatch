@@ -30,6 +30,33 @@ export function DepotSwitch({ depot, onChange }: { depot: Depot; onChange: (d: D
   );
 }
 
+export type PlanDay = 'today' | 'next';
+/**
+ * Which delivery date the dispatcher is planning: the demo day, or the next run (where orders
+ * deferred today and new store orders land). Returns null until the dates have loaded.
+ */
+export function usePlanDate(): [string | null, PlanDay, (d: PlanDay) => void, { today: string; next: string } | null] {
+  const [day, setDayState] = useState<PlanDay>('today');
+  const [days, setDays] = useState<{ today: string; next: string } | null>(null);
+  useEffect(() => {
+    const d = localStorage.getItem('wp-plan-day'); if (d === 'next') setDayState('next');
+    api<{ today: string; next: string }>('/api/days').then(setDays).catch(() => undefined);
+  }, []);
+  const setDay = (d: PlanDay) => { localStorage.setItem('wp-plan-day', d); setDayState(d); };
+  return [days ? days[day] : null, day, setDay, days];
+}
+
+const shortDay = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+export function DaySwitch({ day, onChange, days }: { day: PlanDay; onChange: (d: PlanDay) => void; days: { today: string; next: string } | null }) {
+  if (!days) return null;
+  return (
+    <div className="seg" role="group" aria-label="Delivery day">
+      <button className={day === 'today' ? 'on' : ''} aria-pressed={day === 'today'} onClick={() => onChange('today')}>{shortDay(days.today)}</button>
+      <button className={day === 'next' ? 'on' : ''} aria-pressed={day === 'next'} onClick={() => onChange('next')}>{shortDay(days.next)} · next run</button>
+    </div>
+  );
+}
+
 export function DispatcherShell({ children, badge }: { children: React.ReactNode; badge?: Record<string, number> }) {
   const path = usePathname();
   const [busy, setBusy] = useState(false);

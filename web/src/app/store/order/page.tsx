@@ -17,11 +17,12 @@ export default function OrderPage() {
   const [brand, setBrand] = useState('Fresh');
   const [done, setDone] = useState<{ refs: string[]; date: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => { api<Cat>('/api/store/orders').then(setCat); const o = localStorage.getItem('wp-store-outlet'); setOutlet(o); api<{ outlet: { brand: string; id: string } }>(`/api/store/overview${o ? `?outlet=${o}` : ''}`).then((x) => { setBrand(x.outlet.brand); setOutlet(x.outlet.id); if (x.outlet.brand !== 'Fresh') setTab('ambient'); }); const t = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(t); }, []);
+  const [now, setNow] = useState<Date | null>(null); // set on the client only, so server and browser render the same HTML
+  useEffect(() => { api<Cat>('/api/store/orders').then(setCat); const o = localStorage.getItem('wp-store-outlet'); setOutlet(o); api<{ outlet: { brand: string; id: string } }>(`/api/store/overview${o ? `?outlet=${o}` : ''}`).then((x) => { setBrand(x.outlet.brand); setOutlet(x.outlet.id); if (x.outlet.brand !== 'Fresh') setTab('ambient'); }); setNow(new Date()); const t = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(t); }, []);
 
   // Cutoff countdown to 16:00 Sri Lanka time today.
   const left = useMemo(() => {
+    if (!now) return '…';
     const sl = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Colombo' }));
     const m = 16 * 60 - (sl.getHours() * 60 + sl.getMinutes());
     return m > 0 ? `${Math.floor(m / 60)} h ${m % 60} min left` : 'closed for today — this goes on the next run';
