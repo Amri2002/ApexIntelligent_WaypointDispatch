@@ -50,8 +50,9 @@ export async function seedReference(client, dir) {
   const vehicles = readCsv(dir, 'vehicles.csv');
   const fleet = Object.fromEntries(readCsv(dir, 'demo_fleet_status.csv').map((r) => [r.vehicle_id, r.status]));
   const fuelUsed = fuelUsedByVehicle(dir);
-  await insert(client, 'outlets', ['id', 'brand', 'district', 'depot', 'dock_type', 'parking_constraint', 'mall_window', 'window_open', 'window_close'],
-    outlets.map((o) => [o.outlet_id, o.brand, o.district, o.depot, o.dock_type, o.parking_constraint, o.mall_window || null, o.window_open_time, o.window_close_time]));
+  const styleDay = fs.existsSync(path.join(dir, 'style_schedule.csv')) ? Object.fromEntries(readCsv(dir, 'style_schedule.csv').map((r) => [r.outlet_id, r.delivery_weekday])) : {};
+  await insert(client, 'outlets', ['id', 'brand', 'district', 'depot', 'dock_type', 'parking_constraint', 'mall_window', 'window_open', 'window_close', 'delivery_weekday'],
+    outlets.map((o) => [o.outlet_id, o.brand, o.district, o.depot, o.dock_type, o.parking_constraint, o.mall_window || null, o.window_open_time, o.window_close_time, styleDay[o.outlet_id] ?? null]));
   await insert(client, 'vehicles', ['id', 'type', 'temp', 'weight_cap_kg', 'volume_cap_m3', 'fuel_type', 'km_per_l', 'weekly_fuel_quota_l', 'fuel_used_week_l', 'depot', 'status'],
     vehicles.map((v) => [v.vehicle_id, v.type, v.temp, +v.weight_cap_kg, +v.volume_cap_m3, v.fuel_type, +v.km_per_l, +v.weekly_fuel_quota_l, fuelUsed[v.vehicle_id] ?? 0, v.depot, fleet[v.vehicle_id] || 'available']));
   await insert(client, 'district_travel', ['district', 'depot', 'road_class', 'free_flow_kmh', 'depot_to_district_km', 'depot_to_district_min', 'inter_stop_km', 'inter_stop_min'],

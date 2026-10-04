@@ -156,9 +156,12 @@ Everything the app shows is either one of the organisers' files, used unchanged,
 | `fuel_used_week.csv` | Fuel each vehicle had already used before Friday: km actually driven Mon–Thu of the same week a year earlier (`route_legs_train.csv`, plus the drive back to the depot) ÷ km per litre |
 | `late_risk_model.csv` | Chance of arriving after the window closes, given the minutes to spare at the planned ETA. A logistic model fitted on 91,894 historical arrivals, separately for dry and monsoon days |
 | `arrival_delay_model.csv` | How far real arrivals ran behind the planned ETA (20th, 50th and 80th percentile) by season and stop position. Used for the store's "likely between" time |
+| `style_schedule.csv` | Each Style outlet's weekly delivery weekday. In the history, every Style outlet's deliveries run on one fixed weekday, matching the booklet's "Style orders weekly for a scheduled delivery day" |
 | `forecast_weekly.csv` | The same week last year × the year-on-year trend of the last 8 weeks of order history |
 
-**Still illustrative:** the four users, the product list on the store's order screen (the datasets have order sizes, not products), and which orders are marked as phone orders.
+**Still illustrative:** the four users, the product lists on the store's order screen (the datasets have order sizes, not products), and which orders are marked as phone orders. The product lists do follow each brand: groceries (chilled and dry) for Fresh, garments for Style, appliances for Tech. Their pack sizes are set so typical orders look like the history.
+
+**Brand schedules (booklet p.3):** a new Fresh order goes on the next run, before stores open at 8 AM. A new Tech order goes on the next run, during trading hours. A new Style order goes on that outlet's weekly delivery day (for example OUT015 → Thursday). The store's order screen shows which applies.
 
 **Known limitations:** the loader, driver and store apps run the demo day only; the dispatcher can also plan the next run. After publishing, the only change the dispatcher can make is to report a breakdown; other edits need the draft. Service time is the official allowance scaled by order size, not a trained model (that is the Datathon's Task 1). The forecast is a one-off batch run rather than a scheduled job.
 

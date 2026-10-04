@@ -74,7 +74,7 @@ export async function storeOverview(outletId: string) {
   const outlet = (await db.select().from(s.outlets).where(eq(s.outlets.id, outletId)))[0];
   if (!outlet) throw new HttpError(404, 'Outlet not found');
   const nextDate = await nextOperatingDay(DEMO_DATE);
-  const orders = await db.select().from(s.orders).where(and(eq(s.orders.outletId, outletId), inArray(s.orders.deliveryDate, [DEMO_DATE, nextDate]))).orderBy(asc(s.orders.createdAt));
+  const orders = await db.select().from(s.orders).where(and(eq(s.orders.outletId, outletId), sql`${s.orders.deliveryDate} >= ${DEMO_DATE}`)).orderBy(asc(s.orders.createdAt));
   const stopIds = [...new Set(orders.map((o) => o.stopId).filter(Boolean))] as string[];
   const stopRows = stopIds.length ? await db.select().from(s.stops).where(inArray(s.stops.id, stopIds)) : [];
   const trips = stopRows.length ? await publishedTrips({ tripIds: [...new Set(stopRows.map((x) => x.tripId))] }) : [];
@@ -89,24 +89,54 @@ export async function storeOverview(outletId: string) {
   return { outlet, date: DEMO_DATE, nextDate, orders, deliveries, notes, outlets: DEMO_MODE ? outlets : outlets.filter((o) => o.id === outletId), demo: DEMO_MODE, cutoff: '16:00' };
 }
 
-const CATALOGUE: Record<string, { name: string; pack: string; temp: 'chilled' | 'ambient'; kg: number; m3: number }> = {
-  milk: { name: 'Fresh milk 1 L', pack: 'Crate of 12', temp: 'chilled', kg: 13.2, m3: 0.03 },
-  yoghurt: { name: 'Yoghurt 80 g', pack: 'Carton of 24', temp: 'chilled', kg: 2.2, m3: 0.006 },
-  cheese: { name: 'Cheese slices', pack: 'Case', temp: 'chilled', kg: 4.5, m3: 0.012 },
-  butter: { name: 'Butter 200 g', pack: 'Case of 20', temp: 'chilled', kg: 4.2, m3: 0.01 },
-  rice: { name: 'Rice 5 kg', pack: 'Bag', temp: 'ambient', kg: 5, m3: 0.008 },
-  flour: { name: 'Wheat flour 1 kg', pack: 'Case of 10', temp: 'ambient', kg: 10.4, m3: 0.015 },
-  tea: { name: 'Tea 400 g', pack: 'Case of 12', temp: 'ambient', kg: 5.2, m3: 0.012 },
-  biscuits: { name: 'Biscuits', pack: 'Case of 24', temp: 'ambient', kg: 4.8, m3: 0.02 },
+type Item = { brand: 'Fresh' | 'Style' | 'Tech'; name: string; pack: string; temp: 'chilled' | 'ambient'; kg: number; m3: number };
+// What each brand's stores order (illustrative products; the datasets only have order totals).
+// Style and Tech pack sizes are set so typical orders match the history: a Style order is about
+// 8 m³ of light, bulky garments; a Tech order is a few heavy appliances.
+const CATALOGUE: Record<string, Item> = {
+  milk: { brand: 'Fresh', name: 'Fresh milk 1 L', pack: 'Crate of 12', temp: 'chilled', kg: 13.2, m3: 0.03 },
+  yoghurt: { brand: 'Fresh', name: 'Yoghurt 80 g', pack: 'Carton of 24', temp: 'chilled', kg: 2.2, m3: 0.006 },
+  cheese: { brand: 'Fresh', name: 'Cheese slices', pack: 'Case', temp: 'chilled', kg: 4.5, m3: 0.012 },
+  butter: { brand: 'Fresh', name: 'Butter 200 g', pack: 'Case of 20', temp: 'chilled', kg: 4.2, m3: 0.01 },
+  rice: { brand: 'Fresh', name: 'Rice 5 kg', pack: 'Bag', temp: 'ambient', kg: 5, m3: 0.008 },
+  flour: { brand: 'Fresh', name: 'Wheat flour 1 kg', pack: 'Case of 10', temp: 'ambient', kg: 10.4, m3: 0.015 },
+  tea: { brand: 'Fresh', name: 'Tea 400 g', pack: 'Case of 12', temp: 'ambient', kg: 5.2, m3: 0.012 },
+  biscuits: { brand: 'Fresh', name: 'Biscuits', pack: 'Case of 24', temp: 'ambient', kg: 4.8, m3: 0.02 },
+  folded: { brand: 'Style', name: 'Folded garments', pack: 'Carton of 20', temp: 'ambient', kg: 12, m3: 0.2 },
+  hanging: { brand: 'Style', name: 'Hanging garments', pack: 'Rail of 30', temp: 'ambient', kg: 18, m3: 0.35 },
+  footwear: { brand: 'Style', name: 'Footwear', pack: 'Carton of 12 pairs', temp: 'ambient', kg: 10, m3: 0.12 },
+  fridge: { brand: 'Tech', name: 'Double-door refrigerator', pack: 'Boxed, 1 unit', temp: 'ambient', kg: 140, m3: 1.1 },
+  washer: { brand: 'Tech', name: 'Washing machine', pack: 'Boxed, 1 unit', temp: 'ambient', kg: 90, m3: 0.75 },
+  tv: { brand: 'Tech', name: '65-inch television', pack: 'Boxed, 1 unit', temp: 'ambient', kg: 45, m3: 0.5 },
+  aircon: { brand: 'Tech', name: 'Inverter air conditioner', pack: 'Indoor + outdoor set', temp: 'ambient', kg: 75, m3: 0.6 },
 };
-export const catalogue = () => CATALOGUE;
+
+/**
+ * When a new order from this outlet is delivered, following its brand's schedule (booklet p.3):
+ * Fresh and Tech go on the next run; Style goes on the outlet's weekly delivery day.
+ */
+async function nextDeliveryFor(outlet: typeof s.outlets.$inferSelect) {
+  if (outlet.brand === 'Style' && outlet.deliveryWeekday) {
+    const days = await db.select().from(s.calendarDays).where(and(sql`${s.calendarDays.date} > ${DEMO_DATE}`, eq(s.calendarDays.isOperating, true), eq(s.calendarDays.dowName, outlet.deliveryWeekday.slice(0, 3)))).orderBy(asc(s.calendarDays.date)).limit(1);
+    if (days[0]) return { date: days[0].date, kind: 'weekly' as const, weekday: outlet.deliveryWeekday };
+  }
+  return { date: await nextOperatingDay(DEMO_DATE), kind: outlet.brand === 'Tech' ? ('as_needed' as const) : ('daily' as const), weekday: null };
+}
+
+/** The order form for one outlet: its brand's products and when the order would be delivered. */
+export async function orderForm(outletId: string) {
+  const outlet = (await db.select().from(s.outlets).where(eq(s.outlets.id, outletId)))[0];
+  if (!outlet) throw new HttpError(404, 'Outlet not found');
+  const items = Object.fromEntries(Object.entries(CATALOGUE).filter(([, v]) => v.brand === outlet.brand));
+  return { outletId, brand: outlet.brand, items, delivery: await nextDeliveryFor(outlet) };
+}
 
 export async function placeStoreOrder(outletId: string, lines: { sku: string; qty: number }[]) {
   const outlet = (await db.select().from(s.outlets).where(eq(s.outlets.id, outletId)))[0];
   if (!outlet) throw new HttpError(404, 'Outlet not found');
-  const valid = lines.filter((l) => CATALOGUE[l.sku] && l.qty > 0);
-  if (!valid.length) throw new HttpError(400, 'Add at least one item');
-  const date = await nextOperatingDay(DEMO_DATE);
+  const valid = lines.filter((l) => CATALOGUE[l.sku]?.brand === outlet.brand && l.qty > 0);
+  if (!valid.length) throw new HttpError(400, lines.some((l) => CATALOGUE[l.sku] && l.qty > 0) ? `${outlet.id} is a ${outlet.brand} store; those items are not on its order list` : 'Add at least one item');
+  const { date } = await nextDeliveryFor(outlet);
   const created = [];
   for (const temp of ['chilled', 'ambient'] as const) {
     const ls = valid.filter((l) => CATALOGUE[l.sku].temp === temp);

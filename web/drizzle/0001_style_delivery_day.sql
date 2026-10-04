@@ -1,0 +1,1 @@
+ALTER TABLE "outlets" ADD COLUMN "delivery_weekday" text;
