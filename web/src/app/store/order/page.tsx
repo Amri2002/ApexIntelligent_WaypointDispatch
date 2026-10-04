@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '@/components/Icon';
 import { api } from '@/lib/client/api';
 import { prettyDate } from '@/lib/time';
+import { useStoryNow } from '@/lib/client/clock';
 
 type Cat = Record<string, { name: string; pack: string; temp: 'chilled' | 'ambient'; kg: number; m3: number }>;
 interface Form { brand: string; items: Cat; delivery: { date: string; kind: 'daily' | 'weekly' | 'as_needed'; weekday: string | null } }
@@ -20,8 +21,8 @@ export default function OrderPage() {
   const [brand, setBrand] = useState('Fresh');
   const [done, setDone] = useState<{ refs: string[]; date: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [now, setNow] = useState<Date | null>(null); // set on the client only, so server and browser render the same HTML
-  useEffect(() => { const o = localStorage.getItem('wp-store-outlet'); setOutlet(o); api<Form>(`/api/store/orders${o ? `?outlet=${o}` : ''}`).then((f) => { setCat(f.items); setDelivery(f.delivery); if (f.brand !== 'Fresh') setTab('ambient'); }); api<{ outlet: { brand: string; id: string } }>(`/api/store/overview${o ? `?outlet=${o}` : ''}`).then((x) => { setBrand(x.outlet.brand); setOutlet(x.outlet.id); if (x.outlet.brand !== 'Fresh') setTab('ambient'); }); setNow(new Date()); const t = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(t); }, []);
+  const now = useStoryNow(30_000); // demo clock; null until mounted, so server and browser render the same HTML
+  useEffect(() => { const o = localStorage.getItem('wp-store-outlet'); setOutlet(o); api<Form>(`/api/store/orders${o ? `?outlet=${o}` : ''}`).then((f) => { setCat(f.items); setDelivery(f.delivery); if (f.brand !== 'Fresh') setTab('ambient'); }); api<{ outlet: { brand: string; id: string } }>(`/api/store/overview${o ? `?outlet=${o}` : ''}`).then((x) => { setBrand(x.outlet.brand); setOutlet(x.outlet.id); if (x.outlet.brand !== 'Fresh') setTab('ambient'); });  }, []);
 
   // Cutoff countdown to 16:00 Sri Lanka time today.
   const left = useMemo(() => {

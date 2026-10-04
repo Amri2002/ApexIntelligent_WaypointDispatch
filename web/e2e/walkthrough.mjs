@@ -77,7 +77,7 @@ await v.getByRole('button', { name: 'Start trip' }).waitFor(); await shot(v, 'v1
 await v.getByRole('button', { name: 'Start trip' }).click(); await v.waitForTimeout(1500);
 await v.getByRole('button', { name: /^Arrived at/ }).click();
 await v.getByPlaceholder('Name of store staff').fill('K. Perera');
-const pad = v.locator('canvas.sig'); const b = await pad.boundingBox();
+const pad = v.locator('canvas.sig'); await pad.evaluate((e) => e.scrollIntoView({ block: 'center' })); await v.waitForTimeout(200); const b = await pad.boundingBox();
 await v.mouse.move(b.x + 20, b.y + 60); await v.mouse.down(); await v.mouse.move(b.x + 120, b.y + 30, { steps: 8 }); await v.mouse.move(b.x + 200, b.y + 70, { steps: 8 }); await v.mouse.up();
 await shot(v, 'v2-stop');
 await v.getByRole('button', { name: /Complete stop/ }).click(); await v.waitForTimeout(1200);
@@ -90,6 +90,7 @@ let first = true;
 for (let i = 0; i < 8; i++) {
   if (!(await v.getByPlaceholder('Name of store staff').count())) break;
   await v.getByPlaceholder('Name of store staff').fill('S. Kumar');
+  await v.locator('canvas.sig').evaluate((e) => e.scrollIntoView({ block: 'center' })); await v.waitForTimeout(200);
   const bb = await v.locator('canvas.sig').boundingBox();
   await v.mouse.move(bb.x + 20, bb.y + 60); await v.mouse.down(); await v.mouse.move(bb.x + 160, bb.y + 40, { steps: 6 }); await v.mouse.up();
   if (first) { await shot(v, 'g2-offline'); first = false; }

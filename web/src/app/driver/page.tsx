@@ -10,6 +10,7 @@ import { cached, enqueue, isOnline, useOutbox } from '@/lib/client/outbox';
 import { compressPhoto } from '@/lib/client/image';
 import type { TripView } from '@/lib/opsService';
 import { fmt, prettyDate, slTime } from '@/lib/time';
+import { storyNow, planTime } from '@/lib/client/clock';
 
 interface Run { date: string; vehicleId: string | null; vehicles: string[]; trips: TripView[] }
 type Stop = TripView['stops'][number];
@@ -44,7 +45,7 @@ export default function DriverPage() {
   // Heartbeat while on the road and online, so the dispatcher can tell "quiet" from "no signal".
   useEffect(() => {
     if (!trip || !departed) return;
-    const beat = () => { if (isOnline()) void fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events: [{ id: `hb-${trip.id}-${Date.now()}`, kind: 'driver.heartbeat', at: new Date().toISOString(), payload: { tripId: trip.id } }] }) }).catch(() => undefined); };
+    const beat = () => { if (isOnline()) void fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events: [{ id: `hb-${trip.id}-${Date.now()}`, kind: 'driver.heartbeat', at: storyNow().toISOString(), payload: { tripId: trip.id } }] }) }).catch(() => undefined); };
     beat(); const t = setInterval(beat, 30000); return () => clearInterval(t);
   }, [trip, departed, online]);
 
@@ -52,7 +53,7 @@ export default function DriverPage() {
   if (showReport) return <SyncReport report={report!} trip={trip} onDone={() => void clearReport()} />;
 
   const stop = trip?.stops.find((s) => s.id === openStop);
-  if (trip && stop) return <StopScreen trip={trip} stop={stop} online={online} pendingCount={pending.length} onDone={(next) => setOpenStop(next ?? null)} />;
+  if (trip && stop) return <StopScreen key={stop.id} trip={trip} stop={stop} date={run!.date} online={online} pendingCount={pending.length} onDone={(next) => setOpenStop(next ?? null)} />;
 
   const next = trip?.stops.find((s) => stopStatus(s) === 'pending');
   const lastReturn = trip ? trip.startMin + trip.tripMinutes + 60 : 0;
@@ -91,7 +92,7 @@ export default function DriverPage() {
       </main>
       {trip && <footer className="pfoot" style={{ flexDirection: 'row' }}>
         <a className="btn btn-s" style={{ minHeight: 56, width: 110 }} href={`https://www.google.com/maps/search/${encodeURIComponent(`${next?.outlet.district ?? trip.district}, Sri Lanka`)}`} target="_blank" rel="noreferrer">Maps</a>
-        {!departed ? <button className="btn btn-p btn-lg grow" onClick={() => void enqueue('driver.depart', { tripId: trip.id })}>Start trip</button>
+        {!departed ? <button className="btn btn-p btn-lg grow" onClick={() => void enqueue('driver.depart', { tripId: trip.id }, planTime(run!.date, trip.startMin))}>Start trip</button>
           : next ? <button className="btn btn-p btn-lg grow" onClick={() => setOpenStop(next.id)}>Arrived at {next.outletId}</button>
           : <button className="btn btn-p btn-lg grow" disabled>All stops done</button>}
       </footer>}
@@ -99,8 +100,9 @@ export default function DriverPage() {
   );
 }
 
-function StopScreen({ trip, stop, online, pendingCount, onDone }: { trip: TripView; stop: Stop; online: boolean; pendingCount: number; onDone: (nextStopId?: string) => void }) {
-  const [arrivedAt] = useState(() => new Date().toISOString());
+function StopScreen({ trip, stop, date, online, pendingCount, onDone }: { trip: TripView; stop: Stop; date: string; online: boolean; pendingCount: number; onDone: (nextStopId?: string) => void }) {
+  // In the demo a truck cannot reach a stop before its planned arrival, so the clock jumps there if needed.
+  const [arrivedAt] = useState(() => new Date(Math.max(storyNow().getTime(), planTime(date, stop.etaMin).getTime())).toISOString());
   const [outcome, setOutcome] = useState<string>('delivered');
   const [units, setUnits] = useState(stop.expectedUnits);
   const [receiver, setReceiver] = useState('');
@@ -112,7 +114,7 @@ function StopScreen({ trip, stop, online, pendingCount, onDone }: { trip: TripVi
   const nextStop = trip.stops.find((s) => s.seq > stop.seq && s.status === 'pending');
   const valid = outcome === 'no_access' || outcome === 'refused' || (receiver.trim().length > 1 && (signature || photo));
   async function complete() {
-    await enqueue('driver.stop', { tripId: trip.id, stopId: stop.id, outcome, deliveredUnits: outcome === 'delivered' ? stop.expectedUnits : outcome === 'partial' ? units : 0, receiverName: receiver || null, signature, photo, arrivedAt, gps });
+    await enqueue('driver.stop', { tripId: trip.id, stopId: stop.id, outcome, deliveredUnits: outcome === 'delivered' ? stop.expectedUnits : outcome === 'partial' ? units : 0, receiverName: receiver || null, signature, photo, arrivedAt, gps }, new Date(new Date(arrivedAt).getTime() + Math.round(stop.predServiceMin) * 60_000));
     onDone(nextStop?.id);
   }
   return (

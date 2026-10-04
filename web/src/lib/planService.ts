@@ -7,6 +7,7 @@ import type { EngineInput, EOrder, PlannedTrip } from './engine/types';
 import { HttpError } from './auth';
 import { prettyDate } from './time';
 import { fmt } from './engine/plan';
+import { demoNow } from './clock';
 
 export const REASON_LABEL: Record<string, string> = {
   REEFER_CAPACITY: 'Refrigerated capacity',
@@ -112,7 +113,7 @@ export async function generatePlan(depot: string, date: string) {
       await tx.delete(s.deferrals).where(and(inArray(s.deferrals.orderId, orderIds), inArray(s.deferrals.status, ['proposed', 'requested'])));
     }
     if (existing) await tx.delete(s.plans).where(eq(s.plans.id, existing.id));
-    const [plan] = await tx.insert(s.plans).values({ depot, date, summary: { stats: result.stats, suggestions, generatedAt: new Date().toISOString() } }).returning();
+    const [plan] = await tx.insert(s.plans).values({ depot, date, summary: { stats: result.stats, suggestions, generatedAt: demoNow().toISOString() } }).returning();
     await writeTrips(tx, plan.id, result.trips);
     for (const d of result.deferred) {
       await tx.insert(s.deferrals).values({ orderId: d.orderId, fromDate: date, toDate, reasonCode: d.reason, reasonText: d.reasonText, rank: d.rank, status: 'proposed' });
@@ -197,7 +198,7 @@ export async function decideDeferrals(planId: string, decisions: Decision[], rea
       if (!row || row.status === 'confirmed') continue;
       if (d.action === 'request_window' && row.suggestion) {
         const sug = row.suggestion;
-        await tx.update(s.deferrals).set({ status: 'requested', note: d.note ?? null, decidedBy: user, decidedAt: new Date() }).where(eq(s.deferrals.id, row.id));
+        await tx.update(s.deferrals).set({ status: 'requested', note: d.note ?? null, decidedBy: user, decidedAt: demoNow() }).where(eq(s.deferrals.id, row.id));
         const close = `${String(Math.floor(sug.newCloseMin / 60)).padStart(2, '0')}:${String(sug.newCloseMin % 60).padStart(2, '0')}`;
         await tx.insert(s.notifications).values({
           audience: `OUTLET:${row.outlet.id}`, kind: 'window_request', refId: row.id,
@@ -214,7 +215,7 @@ export async function decideDeferrals(planId: string, decisions: Decision[], rea
 
 type DeferredRow = PlanView['deferred'][number];
 async function confirmOne(tx: Tx, row: DeferredRow, reasonText: string, note: string | null, user: string) {
-  await tx.update(s.deferrals).set({ status: 'confirmed', reasonText, note, decidedBy: user, decidedAt: new Date() }).where(eq(s.deferrals.id, row.id));
+  await tx.update(s.deferrals).set({ status: 'confirmed', reasonText, note, decidedBy: user, decidedAt: demoNow() }).where(eq(s.deferrals.id, row.id));
   await tx.update(s.orders).set({ status: 'deferred', stopId: null }).where(eq(s.orders.id, row.orderId));
   // The order goes to the next run, locked: it cannot be deferred again without a note.
   await tx.insert(s.orders).values({
@@ -238,7 +239,7 @@ export async function answerWindowRequest(notificationId: string, accept: boolea
   const plan = (await db.select().from(s.plans).where(and(eq(s.plans.depot, order.depot), eq(s.plans.date, order.deliveryDate))))[0];
   const view = await getPlanView(order.depot, order.deliveryDate);
   const row = view.deferred.find((d) => d.id === def.id)!;
-  await db.update(s.notifications).set({ response: accept ? 'accepted' : 'declined', readAt: new Date() }).where(eq(s.notifications.id, n.id));
+  await db.update(s.notifications).set({ response: accept ? 'accepted' : 'declined', readAt: demoNow() }).where(eq(s.notifications.id, n.id));
   if (accept && row.suggestion) {
     const ext = new Map([[order.outletId, row.suggestion.extraMin]]);
     const res = await moveOrder(plan.id, order.id, { vehicleId: row.suggestion.vehicleId }, ext).catch((e) => e as Error);
@@ -258,7 +259,7 @@ export async function publishPlan(planId: string, user: string) {
   if (!plan) throw new HttpError(404, 'Plan not found');
   const view = await getPlanView(plan.depot, plan.date);
   if (view.totals.undecided > 0) throw new HttpError(409, `Decide the ${view.totals.undecided} unplaced orders first`);
-  await db.update(s.plans).set({ status: 'published', publishedAt: new Date(), publishedBy: user, updatedAt: new Date() }).where(eq(s.plans.id, planId));
+  await db.update(s.plans).set({ status: 'published', publishedAt: demoNow(), publishedBy: user, updatedAt: demoNow() }).where(eq(s.plans.id, planId));
   await db.insert(s.notifications).values({ audience: `LOADER:${plan.depot}`, kind: 'plan_change', title: `Plan for ${prettyDate(plan.date)} published`, body: `${view.trips.length} trips on ${view.totals.vehiclesUsed} vehicles.` });
   return getPlanView(plan.depot, plan.date);
 }
@@ -319,7 +320,7 @@ export async function moveOrder(planId: string, orderId: string, target: { vehic
       const toDate = await nextOperatingDay(plan.date);
       await tx.insert(s.deferrals).values({ orderId, fromDate: plan.date, toDate, reasonCode: 'MANUAL', reasonText: 'Taken off the plan by the dispatcher', rank: 99, status: 'proposed' });
     }
-    await tx.update(s.plans).set({ updatedAt: new Date() }).where(eq(s.plans.id, planId));
+    await tx.update(s.plans).set({ updatedAt: demoNow() }).where(eq(s.plans.id, planId));
   });
   return getPlanView(plan.depot, plan.date);
 }
@@ -381,7 +382,7 @@ export async function reportBreakdown(planId: string, vehicleId: string, user: s
       { audience: `LOADER:${plan.depot}`, kind: 'plan_change', refId: planId, title: `Plan changed: ${vehicleId} broke down`, body: `Do not load ${vehicleId}. ${movedText}${deferredText}. Your list below is already up to date.` },
       ...moved.map((m) => ({ audience: `OUTLET:${m.order.outletId}`, kind: 'plan_change', refId: m.order.id, title: `Your delivery now comes on ${m.vehicleId}`, body: `${vehicleId} broke down. Order ${m.order.ref} moved to ${m.vehicleId}, trip ${m.tripNo}, planned about ${fmt(m.etaMin)}. Nothing for you to do.` })),
     ]);
-    await tx.update(s.plans).set({ updatedAt: new Date() }).where(eq(s.plans.id, planId));
+    await tx.update(s.plans).set({ updatedAt: demoNow() }).where(eq(s.plans.id, planId));
   });
 
   // Breakdown deferrals are decided on the spot (the plan is already running) and each store is told.

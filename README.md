@@ -31,7 +31,8 @@ docker compose up --build
 
 Open **http://localhost:3000**. On first start the web container migrates the database, then loads the reference data and the demo day (Friday 10 April 2026) from `data/`. No other steps are needed.
 
-* To start over: press **Reset demo day** in the dispatcher sidebar, or run `SEED_FORCE=1 docker compose up`.
+* To start over: press **Reset demo day** in the dispatcher sidebar, or run `SEED_FORCE=1 docker compose up`. Reset also sets the demo clock back to Thu 9 Apr, 21:00 (see below), so press it just before a demo.
+* If you ran an earlier version, run `docker compose down -v` once so the database picks up the new migrations.
 * Settings: Docker needs no `.env`. The database URL is fixed to the bundled Postgres. To change the session secret, create a `.env` file in the repo root containing `AUTH_SECRET=<random string>`.
 
 ### Without Docker (for development)
@@ -67,6 +68,8 @@ All accounts use the password **`Waypoint@2026`**. The login page also has one-c
 
 The demo day is **Friday 10 April 2026**, three days before New Year. Peliyagoda has 5 of its 9 refrigerated vehicles in the workshop, and chilled demand is 2.1× what one wave of the remaining reefers can carry. Kandy has a normal day.
 
+**The demo clock.** The app does not use today's date. It runs on a shared *story time* that starts at **Thu 9 Apr 2026, 21:00** (the evening before the demo day) and moves forward in real time. Field actions move it to the moment they would really happen: sealing a load sets it to 40 minutes before departure, **Start trip** to the planned start, and each stop to its planned arrival (or later, if the clock is already past it). Every timestamp, notice and countdown uses story time. The dispatcher sidebar shows the clock with **+15m**, **+1 h** and **Set…**, so you can skip ahead or make a truck run late. The clock never goes backwards. With `DEMO_MODE=false` the app uses the real time and the buttons disappear.
+
 Use a desktop window for the dispatcher. For the other roles, use a phone or a narrow window (about 390 px), in a private window so each role keeps its own session.
 
 **Dispatcher: plan a short day (Peliyagoda)**
@@ -88,7 +91,7 @@ Use a desktop window for the dispatcher. For the other roles, use a phone or a n
 10. In the dispatcher's **Live run**, VEH041 shows as *No signal* with its last record and the predicted next stop.
 
 **Store manager (phone)**
-11. Sign in as **Store manager** (OUT106). The page shows the ETA with a range. Press **The truck is here**, then **Report an issue → Damaged → + → Send report**.
+11. Sign in as **Store manager** (OUT106). The page shows the ETA with a range. Before the truck records a stop, the range comes from how trucks have run on days like this. Once the driver records a stop, it says *Updated from the truck* and moves with the truck's real lateness. To see this, press **+1 h** in the dispatcher sidebar before the driver records the next stop: the stop is recorded late, and the store's estimate moves later with it. Press **The truck is here**, then **Report an issue → Damaged → + → Send report**.
 
 **Recovery**
 12. On the driver's phone, switch **Simulate no signal** off. Queued records replay in order and exactly once. The **sync report** lists what was sent and shows that the store's damage report was automatically matched to the loader's flag, so the driver has nothing to do.
@@ -97,10 +100,10 @@ Use a desktop window for the dispatcher. For the other roles, use a phone or a n
 13. In the store app, use the **Outlet (demo)** picker to choose an outlet deferred in step 4. It sees the notice with the reason and new date, and can reply (for example, **Chiller will be empty**). **Place order** shows the 16:00 cutoff countdown and returns a reference number at once.
 14. Dispatcher **Forecast**: weekly chilled demand as a share of reefer capacity for the next 10 weeks, with festival weeks marked and a workshop-timing recommendation.
 
-**The next run: closing the loop**
 **When something breaks: a truck breaks down after publishing**
 15. As the dispatcher, open **Plan**, choose **Fri, 10 Apr** and **Peliyagoda**, click the **VEH007** trip bar, then press **Report VEH007 broken down**. The engine re-homes its orders onto vehicles that have not started loading, keeping their existing stops and all nine rules. It moves the two dry orders to ordinary trucks and defers the two chilled orders, because no reefer has room left. The dock, the **Live run** feed and every affected store are told at once. As the **Store manager**, pick **OUT068** in the outlet picker to see *"Your delivery now comes on VEH030"*.
 
+**The next run: closing the loop**
 16. As the dispatcher, switch the day at the top right from **Fri, 10 Apr** to **Sat, 11 Apr · next run**. The **Orders** queue now holds the orders deferred in step 4, which go first, plus the order the store placed in step 13. Press **Build plan for Sat, 11 Apr**. The same engine and rules apply, and the 5 reefers are still in the workshop, so the plan shows honestly which deferred orders still cannot fit. Deferring one of them a second time requires a written note. (Only the dispatcher screens switch days; the loader, driver and store apps stay on 10 April.)
 
 ## 4. How it works

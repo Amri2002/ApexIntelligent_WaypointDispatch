@@ -64,6 +64,16 @@ flowchart LR
 6. **Recovery report.** After a sync, the driver sees what was sent, what the server matched, and anything rejected. The dispatcher's live board shows when each trip last synced and flags trips that have been quiet for too long.
 7. **Demo control.** Judges can test all of this without turning Wi-Fi off. The account menu on the driver and loader screens has a **Simulate no signal** switch. It routes every write to the outbox exactly as a real network loss would.
 
+## Demo clock (story time)
+
+The demo day is fixed (Fri 10 April 2026), so the app cannot use the wall clock. `web/src/lib/clock.ts` keeps one shared offset in the `app_settings` table as `{storyMs, realMs}`: story time = `storyMs + (now − realMs)`, so it runs at normal speed from the moment it was set. Every API handler loads it first, and the server uses `demoNow()` wherever it used `new Date()` (timestamps, cutoffs, offline detection, `created_at` defaults).
+
+* **Start.** Seed and **Reset demo day** set it to Thu 9 Apr 2026, 21:00 Colombo time.
+* **Field actions move it forward.** A synced event with a later timestamp advances the clock to that time before the event is applied. The phones stamp events with realistic times: loading at departure − 40 min, **Start trip** at the planned start, a stop's arrival at max(story time, planned ETA), and completion after the predicted service time.
+* **Presenter control.** `POST /api/clock` (dispatcher only) adds minutes or sets a time, forward only and at most 3 days ahead. The sidebar buttons call it.
+* **Offline.** Phones cache the offset in local storage and keep counting without signal. While records are waiting in the outbox, a phone never takes an earlier time from the server, so queued records stay in order.
+* **Real use.** With `DEMO_MODE=false` the offset is always zero, and `POST /api/clock` returns 409.
+
 ## Security
 
 * Passwords are hashed with bcrypt. The session is an HS256 JWT in an `httpOnly`, `sameSite=lax` cookie, valid for 7 days.

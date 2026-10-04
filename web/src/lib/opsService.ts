@@ -4,7 +4,8 @@ import { and, eq, inArray, asc, desc, sql } from 'drizzle-orm';
 import { db, schema as s } from '@/db';
 import { HttpError, DEMO_MODE, type Session } from './auth';
 import { DEMO_DATE, prettyDate } from './time';
-import { expectedArrival } from './engine/arrivalDelay';
+import { liveArrival } from './engine/arrivalDelay';
+import { demoNow, advanceTo } from './clock';
 import { nextOperatingDay } from './planService';
 
 const OFFLINE_AFTER_MS = 90_000; // a departed vehicle with no record for 90 s shows as offline
@@ -37,7 +38,7 @@ async function publishedTrips(where: { depot?: string; vehicleId?: string; tripI
         receipt: receipts.find((r) => r.stopId === x.id) ?? null,
       };
     }),
-    isOffline: t.status === 'departed' && (!t.lastSyncAt || Date.now() - new Date(t.lastSyncAt).getTime() > OFFLINE_AFTER_MS),
+    isOffline: t.status === 'departed' && (!t.lastSyncAt || demoNow().getTime() - new Date(t.lastSyncAt).getTime() > OFFLINE_AFTER_MS),
   }));
 }
 export type TripView = Awaited<ReturnType<typeof publishedTrips>>[number];
@@ -66,10 +67,18 @@ export async function driverRun(session: Session, vehicleId?: string | null) {
     const store = (await db.select().from(s.users).where(eq(s.users.role, 'STORE_MANAGER')))[0];
     vid = all.find((t) => t.stops.some((x) => x.outletId === store?.outletId))?.vehicleId ?? vehicles[0] ?? null;
   }
-  return { date: DEMO_DATE, vehicleId: vid, vehicles: DEMO_MODE ? vehicles : vehicles.filter((v) => v === vid), demo: DEMO_MODE, trips: all.filter((t) => t.vehicleId === vid), serverTime: new Date().toISOString() };
+  return { date: DEMO_DATE, vehicleId: vid, vehicles: DEMO_MODE ? vehicles : vehicles.filter((v) => v === vid), demo: DEMO_MODE, trips: all.filter((t) => t.vehicleId === vid), serverTime: demoNow().toISOString() };
 }
 
 // ---------- Store manager ----------
+const dayStart = (date: string) => new Date(`${date}T00:00:00+05:30`).getTime();
+/** The latest stop before `seq` on this trip that the driver has recorded, in minutes after midnight on the demo day. */
+function lastReported(stops: { seq: number; etaMin: number; status: string; arrivedAt: Date | string | null }[], seq: number) {
+  const done = stops.filter((x) => x.seq < seq && x.status !== 'pending' && x.arrivedAt).sort((a, b) => b.seq - a.seq)[0];
+  if (!done) return null;
+  return { seq: done.seq, etaMin: done.etaMin, arrivedMin: (new Date(done.arrivedAt!).getTime() - dayStart(DEMO_DATE)) / 60_000 };
+}
+
 export async function storeOverview(outletId: string) {
   const outlet = (await db.select().from(s.outlets).where(eq(s.outlets.id, outletId)))[0];
   if (!outlet) throw new HttpError(404, 'Outlet not found');
@@ -82,7 +91,7 @@ export async function storeOverview(outletId: string) {
   const deliveries = trips.map((t) => {
     const stop = t.stops.find((x) => x.outletId === outletId)!;
     const done = t.stops.filter((x) => x.status !== 'pending').length;
-    return { trip: { id: t.id, vehicleId: t.vehicleId, tripNo: t.tripNo, status: t.status, startMin: t.startMin, sealedAt: t.sealedAt, departedAt: t.departedAt, lastSyncAt: t.lastSyncAt, isOffline: t.isOffline, stopsTotal: t.stops.length, stopsDone: done, flags: t.flags.filter((f) => f.stopId === stop.id) }, stop , arrival: expectedArrival(stop.etaMin, stop.seq, monsoon) };
+    return { trip: { id: t.id, vehicleId: t.vehicleId, tripNo: t.tripNo, status: t.status, startMin: t.startMin, sealedAt: t.sealedAt, departedAt: t.departedAt, lastSyncAt: t.lastSyncAt, isOffline: t.isOffline, stopsTotal: t.stops.length, stopsDone: done, flags: t.flags.filter((f) => f.stopId === stop.id) }, stop , arrival: liveArrival(stop.etaMin, stop.seq, monsoon, lastReported(t.stops, stop.seq)) };
   });
   const notes = await db.select().from(s.notifications).where(eq(s.notifications.audience, `OUTLET:${outletId}`)).orderBy(desc(s.notifications.createdAt));
   const outlets = await db.select({ id: s.outlets.id, brand: s.outlets.brand, district: s.outlets.district }).from(s.outlets).orderBy(asc(s.outlets.id));
@@ -193,6 +202,9 @@ export async function applyEvents(session: Session, events: SyncEventIn[]) {
     try {
       const p = e.payload as Record<string, never>;
       const at = new Date(e.at);
+      // Field work moves the shared demo clock forward to when it happened (never backwards), before
+      // anything it triggers is recorded, so flags and notices carry the same story time.
+      if (e.kind !== 'driver.heartbeat' && !Number.isNaN(at.getTime())) await advanceTo(at);
       const stopTrip = !p.tripId && p.stopId ? (await db.select({ tripId: s.stops.tripId }).from(s.stops).where(eq(s.stops.id, p.stopId)))[0]?.tripId : undefined;
       await assertOwnTrip(session, (p.tripId as string | undefined) ?? stopTrip);
       switch (e.kind) {
@@ -222,11 +234,11 @@ export async function applyEvents(session: Session, events: SyncEventIn[]) {
           break;
         }
         case 'driver.depart': {
-          await db.update(s.trips).set({ status: 'departed', departedAt: at, lastSyncAt: new Date() }).where(eq(s.trips.id, p.tripId));
+          await db.update(s.trips).set({ status: 'departed', departedAt: at, lastSyncAt: demoNow() }).where(eq(s.trips.id, p.tripId));
           break;
         }
         case 'driver.heartbeat': {
-          await db.update(s.trips).set({ lastSyncAt: new Date() }).where(eq(s.trips.id, p.tripId));
+          await db.update(s.trips).set({ lastSyncAt: demoNow() }).where(eq(s.trips.id, p.tripId));
           break;
         }
         case 'driver.stop': {
@@ -239,11 +251,11 @@ export async function applyEvents(session: Session, events: SyncEventIn[]) {
           await db.update(s.stops).set({
             status: outcome, arrivedAt: p.arrivedAt ? new Date(p.arrivedAt) : at, completedAt: at, receiverName: p.receiverName ?? null,
             signature: p.signature ?? null, photo: p.photo ?? null, deliveredUnits: p.deliveredUnits ?? null, note: p.note ?? null, gps: p.gps ?? null,
-            recordedOffline: !!p.offline, syncedAt: new Date(),
+            recordedOffline: !!p.offline, syncedAt: demoNow(),
           }).where(eq(s.stops.id, p.stopId));
           const map: Record<string, string> = { delivered: 'delivered', partial: 'partial', refused: 'refused', no_access: 'failed' };
           await db.update(s.orders).set({ status: map[outcome] ?? 'delivered' }).where(eq(s.orders.stopId, p.stopId));
-          await db.update(s.trips).set({ lastSyncAt: new Date(), status: 'departed' }).where(eq(s.trips.id, stop.tripId));
+          await db.update(s.trips).set({ lastSyncAt: demoNow(), status: 'departed' }).where(eq(s.trips.id, stop.tripId));
           const rec = (await db.select().from(s.receipts).where(eq(s.receipts.stopId, p.stopId)))[0];
           if (rec?.status === 'issue') matched = rec.matchedFlagId ? `The store reported "${rec.issueType} × ${rec.qty}" while you were offline. It matches the loader's flag, so there is nothing for you to do.` : `The store reported "${rec.issueType}". Your record and photo have been sent to the dispatcher.`;
           const remaining = (await db.select().from(s.stops).where(and(eq(s.stops.tripId, stop.tripId), eq(s.stops.status, 'pending')))).length;
@@ -256,7 +268,7 @@ export async function applyEvents(session: Session, events: SyncEventIn[]) {
     await db.insert(s.syncEvents).values({ id: e.id, userId: session.userId, kind: e.kind, payload: e.payload, clientAt: new Date(e.at), result: ok ? 'applied' : `rejected: ${message}` }).onConflictDoNothing();
     results.push({ id: e.id, status: ok ? 'applied' : 'rejected', message, matched });
   }
-  return { results, serverTime: new Date().toISOString() };
+  return { results, serverTime: demoNow().toISOString() };
 }
 
 // ---------- Live board ----------
