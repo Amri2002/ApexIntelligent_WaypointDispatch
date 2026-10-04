@@ -25,15 +25,26 @@ We used an AI assistant (Claude, by Anthropic) as a coding assistant during this
 * Ran the app locally and walked through every role on desktop and phone sizes. Tested offline mode with real network loss and with the simulate switch. Fixed the issues found: table clipping, trip-bar labels, an over-confident late-risk curve, a forecast loading race, an outbox bug that stopped offline records sending after reconnect, and duplicate stop records after sync.
 * Ran the unit tests and the end-to-end walkthrough, and checked the screenshots.
 
-**Still to be done by the team before submission**
-* Deploy to the public URL and confirm the seeded accounts work there.
-* Record the 5–8 minute demo video, following the judge walkthrough in the README.
-* Do a final review of the code and the README, and push to the private repository shared with the organisers.
+**Making it behave like a real system**
+* Reviewed the first build for anything hard-coded for the demo, and asked for the parts that matter in a real depot to be made real: re-planning after a vehicle breakdown, planning the next run, each brand's delivery schedule (Fresh daily before 08:00, Style on the store's weekly day, Tech as needed), and the 16:00 order cutoff.
+* Asked for a shared demo clock, so every timestamp follows the story of the demo day, and for the store's expected arrival to update from the truck's real progress.
+* Asked for the dispatcher to be able to swap orders: place an order the engine left out, and undo a manual deferral before confirming it.
+* Validated the engine's peak-day plan with the organisers' Task 2B checker (`check_allocation.py`): passed, with 70 orders served and 15 deferred.
+
+**Testing that found real defects**
+* Walked through every role after each change, on desktop and phone sizes, and reported what looked wrong. Each report traced back to a real defect that was then fixed:
+  * every stop after the first recorded the same arrival time;
+  * a store that receives two deliveries (chilled on a reefer, dry on a truck) saw only one of them;
+  * the driver's top-bar time and the recorded arrival time disagreed;
+  * a completed stop reopened as a blank form;
+  * sign-out was hidden behind the connection status;
+  * a moved order always joined a vehicle's first trip, so some legal moves were refused.
 
 ## AI assistance
 
 * Generated first drafts of the code to the team's specification: the Drizzle schema and seed loader, the planning engine, the API route handlers, the React screens, the offline outbox and service worker, the unit tests and the Playwright walkthrough.
 * Suggested fixes during debugging (for example, replacing Prisma with Drizzle when the Prisma engine download was blocked).
+* In the later rounds, drafted the code for the features above to the team's specification: breakdown re-planning, next-run planning, brand delivery schedules, the order cutoff, the demo clock, live arrival estimates, the vehicle-options dry run behind **Move…** and **Place…**, and the CI workflow. It also wrote the end-to-end tests that check each feature.
 * Drafted this documentation (architecture, data model, planning engine, README) for the team to edit.
 
 ## What we did not use AI for
