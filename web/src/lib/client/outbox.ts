@@ -4,6 +4,7 @@
 // exactly once, so retries are safe.
 import { get, set } from 'idb-keyval';
 import { useCallback, useEffect, useState } from 'react';
+import { storyNow, bumpTo, setHoldAhead, syncClock } from './clock';
 
 export interface OutEvent { id: string; kind: string; at: string; payload: Record<string, unknown> }
 export interface SyncResult { id: string; status: 'applied' | 'duplicate' | 'rejected'; message?: string; matched?: string }
@@ -23,9 +24,21 @@ export function isOnline() { return typeof navigator !== 'undefined' && navigato
 
 export async function queue(): Promise<OutEvent[]> { return ((await get(QUEUE)) as OutEvent[] | undefined) ?? []; }
 
-export async function enqueue(kind: string, payload: Record<string, unknown>) {
-  const ev: OutEvent = { id: uid(), kind, at: new Date().toISOString(), payload: { ...payload, offline: !isOnline() } };
-  await set(QUEUE, [...(await queue()), ev]);
+let pendingCount = 0;
+setHoldAhead(() => pendingCount > 0);
+
+/**
+ * Records a field action. `at` is when it happened in story time: by default now, or a later
+ * time the caller knows is right (e.g. a truck cannot reach a stop before its planned arrival in
+ * the demo). The device's clock moves forward to it.
+ */
+export async function enqueue(kind: string, payload: Record<string, unknown>, at?: Date) {
+  const when = at && at.getTime() > storyNow().getTime() ? at : storyNow();
+  bumpTo(when);
+  const ev: OutEvent = { id: uid(), kind, at: when.toISOString(), payload: { ...payload, offline: !isOnline() } };
+  const q = [...(await queue()), ev];
+  pendingCount = q.length;
+  await set(QUEUE, q);
   notify();
   void flush();
   return ev;
@@ -46,8 +59,11 @@ export function flush(): Promise<SyncReport | null> {
       if (!res.ok) return null;
       const { results } = (await res.json()) as { results: SyncResult[] };
       const done = new Set(results.map((r) => r.id));
-      await set(QUEUE, (await queue()).filter((e) => !done.has(e.id)));
-      const report: SyncReport = { at: new Date().toISOString(), events: events.map((e) => ({ ...e, result: results.find((r) => r.id === e.id) })) };
+      const left = (await queue()).filter((e) => !done.has(e.id));
+      pendingCount = left.length;
+      await set(QUEUE, left);
+      void syncClock();
+      const report: SyncReport = { at: storyNow().toISOString(), events: events.map((e) => ({ ...e, result: results.find((r) => r.id === e.id) })) };
       // Keep a report only when something was recorded offline, so the driver sees what was sent.
       if (events.some((e) => e.payload.offline)) await set(REPORT, report);
       return report;
@@ -72,7 +88,7 @@ export function useOutbox() {
   const [online, setOnline] = useState(true);
   const [report, setReport] = useState<SyncReport | undefined>();
   const [simulated, setSim] = useState(false);
-  const refresh = useCallback(async () => { setSim(simulatedOffline()); setOnline(isOnline()); setPending(await queue()); setReport(await lastReport()); }, []);
+  const refresh = useCallback(async () => { setSim(simulatedOffline()); setOnline(isOnline()); const q = await queue(); pendingCount = q.length; setPending(q); setReport(await lastReport()); }, []);
   useEffect(() => {
     void refresh();
     listeners.add(refresh);

@@ -31,7 +31,8 @@ docker compose up --build
 
 Open **http://localhost:3000**. On first start the web container migrates the database, then loads the reference data and the demo day (Friday 10 April 2026) from `data/`. No other steps are needed.
 
-* To start over: press **Reset demo day** in the dispatcher sidebar, or run `SEED_FORCE=1 docker compose up`.
+* To start over: press **Reset demo day** in the dispatcher sidebar, or run `SEED_FORCE=1 docker compose up`. Reset also sets the demo clock back to Thu 9 Apr, 21:00 (see below), so press it just before a demo.
+* If you ran an earlier version, run `docker compose down -v` once so the database picks up the new migrations.
 * Settings: Docker needs no `.env`. The database URL is fixed to the bundled Postgres. To change the session secret, create a `.env` file in the repo root containing `AUTH_SECRET=<random string>`.
 
 ### Without Docker (for development)
@@ -67,12 +68,26 @@ All accounts use the password **`Waypoint@2026`**. The login page also has one-c
 
 The demo day is **Friday 10 April 2026**, three days before New Year. Peliyagoda has 5 of its 9 refrigerated vehicles in the workshop, and chilled demand is 2.1× what one wave of the remaining reefers can carry. Kandy has a normal day.
 
+**The demo clock.** The app does not use today's date. It runs on a shared *story time* that starts at **Thu 9 Apr 2026, 21:00** (the evening before the demo day) and moves forward at normal speed. Every timestamp, notice and countdown uses it, and phones show it in their top bar. The dispatcher sidebar shows it with **+15m**, **+1 h** and **Set…**. It never goes backwards.
+
+Field actions move the clock to the moment they would really happen, taken from that truck's own plan:
+
+| Action | Time recorded |
+|---|---|
+| Loader checks, flags or seals | 40 minutes before the trip's planned start |
+| Driver presses **Start trip** | The trip's planned start |
+| Driver presses **Arrived at …** | The stop's planned arrival, **or the current story time if that is later** |
+| Driver completes the stop | Arrival + the predicted unloading time |
+
+So, if you click through at a normal pace, every stop is recorded on time and stores see *on time*. A stop is late when the clock is already past its planned arrival, either because you pressed **+15m** / **+1 h** first or because real time passed between clicks. The delay then carries on to the stops after it, and the stores further down the route see their expected time move. A truck is never recorded as early. With `DEMO_MODE=false` all of this is off: every action is stamped with the real time on the phone, and the clock buttons disappear.
+
 Use a desktop window for the dispatcher. For the other roles, use a phone or a narrow window (about 390 px), in a private window so each role keeps its own session.
 
 **Dispatcher: plan a short day (Peliyagoda)**
 1. Sign in as **Dispatcher**. The **Orders** queue shows 85 confirmed orders, 409.9 m³ in total, of which 181.6 m³ is chilled. The *Before you plan* panel warns that S1-078 is too large for any vehicle, that 10 orders were deferred yesterday, and that chilled demand is 2.1× reefer capacity.
 2. Press **Build plan for Fri, 10 Apr**. The plan places 70 of 85 orders. Select any trip bar to see its **constraint checks**: refrigeration, weight and volume, van-only access, every ETA inside its window, the Fresh 270-minute budget, the weekly fuel quota, and trip 1 of 2. **Move…** on an order lists the vehicles it can legally go to. Moving a chilled order to an ambient truck is refused with the reason.
 3. Press **Review and decide** on the red banner. Each deferral has a reason (no reefer room, window, oversize), a rank and the impact on the store. The fairness check shows that every order deferred yesterday is on today's plan.
+   *Optional: swap one order for another.* Every unplaced order has **Place on a vehicle…**, which checks every vehicle against all nine rules and lists only the ones that pass. The others are listed with the rule that blocks them. On this day no vehicle can take **S1-016** at first. Back on **Plan**, select VEH003's Colombo trip and press **Defer** on **S1-009**. Return here: **S1-016** can now go on VEH003, and S1-009 shows **Undo: put back on a vehicle…** until you confirm. A confirmed deferral cannot be pulled back, because the store has been told and the order is already on the next run.
 4. Press **Split into two loads** on S1-078. The order becomes two loads and the plan reruns. Where a later window would let a vehicle serve an order, the decision is pre-set to **Ask store to accept until HH:MM**. Fill the note on any outlet that is being skipped for a second day, then press **Confirm N deferrals**. Each store is notified straight away.
 5. Back on **Plan**, press **Publish to docks and drivers**.
 
@@ -84,23 +99,23 @@ Use a desktop window for the dispatcher. For the other roles, use a phone or a n
 
 **Driver (phone): offline mode**
 8. Sign in as **Driver** (VEH041). Press **Start trip** and complete the first stop: receiver name, signature, then **Complete stop**.
-9. Open the account menu (top right) and switch on **Simulate no signal**. The app works exactly as it would with no coverage. You can also turn the phone's network off for real. Record the remaining stops: each is **Saved on phone**, and the header counts what is waiting.
+9. Tap the **Online** chip in the top bar and switch on **Simulate no signal**. The app works exactly as it would with no coverage. You can also turn the phone's network off for real. Record the remaining stops: each is **Saved on phone**, and the header counts what is waiting.
 10. In the dispatcher's **Live run**, VEH041 shows as *No signal* with its last record and the predicted next stop.
 
 **Store manager (phone)**
-11. Sign in as **Store manager** (OUT106). The page shows the ETA with a range. Press **The truck is here**, then **Report an issue → Damaged → + → Send report**.
+11. Sign in as **Store manager** (OUT106). The page shows the ETA with a range. Before the truck records a stop, the range comes from how trucks have run on days like this. Once the driver records a stop, it says *Updated from the truck* and moves with the truck's real lateness. To see this, press **+1 h** in the dispatcher sidebar before the driver records the next stop: the stop is recorded late, and the store's estimate moves later with it. Press **The truck is here**, then **Report an issue → Damaged → + → Send report**.
 
 **Recovery**
 12. On the driver's phone, switch **Simulate no signal** off. Queued records replay in order and exactly once. The **sync report** lists what was sent and shows that the store's damage report was automatically matched to the loader's flag, so the driver has nothing to do.
 
 **Deferral from the store's side, and the forecast**
-13. In the store app, use the **Outlet (demo)** picker to choose an outlet deferred in step 4. It sees the notice with the reason and new date, and can reply (for example, **Chiller will be empty**). **Place order** shows the 16:00 cutoff countdown and returns a reference number at once.
+13. In the store app, use the **Outlet (demo)** picker to choose an outlet deferred in step 4. It sees the notice with the reason and new date, and can reply (for example, **Chiller will be empty**). **Place order** shows the 16:00 cutoff countdown and returns a reference number at once. The cutoff is enforced with the demo clock: before 16:00 an order goes on the next operating day (Fresh and Tech) or the store's next weekly day (Style). After 16:00 the next run is already being planned, so it goes one operating day later. To see it, press **Set… 16:05** in the dispatcher sidebar: an OUT106 order then moves from Sat 11 April to Wed 15 April, because 12–14 April are not operating days. Do this after step 16, because the next-run step expects the order on Sat 11 April.
 14. Dispatcher **Forecast**: weekly chilled demand as a share of reefer capacity for the next 10 weeks, with festival weeks marked and a workshop-timing recommendation.
 
-**The next run: closing the loop**
 **When something breaks: a truck breaks down after publishing**
 15. As the dispatcher, open **Plan**, choose **Fri, 10 Apr** and **Peliyagoda**, click the **VEH007** trip bar, then press **Report VEH007 broken down**. The engine re-homes its orders onto vehicles that have not started loading, keeping their existing stops and all nine rules. It moves the two dry orders to ordinary trucks and defers the two chilled orders, because no reefer has room left. The dock, the **Live run** feed and every affected store are told at once. As the **Store manager**, pick **OUT068** in the outlet picker to see *"Your delivery now comes on VEH030"*.
 
+**The next run: closing the loop**
 16. As the dispatcher, switch the day at the top right from **Fri, 10 Apr** to **Sat, 11 Apr · next run**. The **Orders** queue now holds the orders deferred in step 4, which go first, plus the order the store placed in step 13. Press **Build plan for Sat, 11 Apr**. The same engine and rules apply, and the 5 reefers are still in the workshop, so the plan shows honestly which deferred orders still cannot fit. Deferring one of them a second time requires a written note. (Only the dispatcher screens switch days; the loader, driver and store apps stay on 10 April.)
 
 ## 4. How it works
@@ -139,7 +154,7 @@ The Designathon prototype was our starting point. Here is where the build differ
 | Oversized orders not covered | Orders stay whole. An oversized order is deferred as `OVERSIZE` with a **Split into two loads** action | The allocation rules treat orders as whole units, so splitting is a decision the dispatcher makes and can see. |
 | Drag a stop between trips on the plan | **Move…** on each order lists only the vehicles it can legally go to. Illegal moves are refused with the rule | Same checks, but works with touch and keyboard, and judges cannot drop an order somewhere it cannot go. |
 | Forecast for the next 8 weeks | 10 weeks, from a seasonal × recent-trend weekly model | The Datathon model is due later and will replace it behind the same API. |
-| Offline shown by losing coverage | Real offline **and** a **Simulate no signal** switch in the account menu | Judges can test recovery without touching device settings. Both paths use the same outbox. |
+| Offline shown by losing coverage | Real offline **and** a **Simulate no signal** switch behind the **Online** chip | Judges can test recovery without touching device settings. Both paths use the same outbox. |
 | **Escalate to ops manager** on the deferral screen | Not built | There is no ops-manager role in the brief's four roles. Every decision is still logged with who, when and why. |
 | One driver and one store | **Vehicle (demo)** and **Outlet (demo)** pickers, plus **Reset demo day** | They let one set of seeded accounts show every case, including a deferred store. With `DEMO_MODE=false` the pickers disappear and the server holds every account to its own outlet, vehicle and depot. |
 | A single delivery day | A **day switch** for the dispatcher: the demo day and the **next run** | Orders deferred today and new store orders land on the next run, which can be planned with the same engine. Fuel used by published plans earlier in the week counts against the weekly quota. |

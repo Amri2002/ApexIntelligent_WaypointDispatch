@@ -2,6 +2,7 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { loadClock } from './clock';
 
 export type Role = 'DISPATCHER' | 'LOADER' | 'DRIVER' | 'STORE_MANAGER';
 export interface Session { userId: string; name: string; email: string; role: Role; depot: string | null; outletId: string | null; vehicleId: string | null }
@@ -57,6 +58,7 @@ export async function requireRole(...roles: Role[]) {
 export function handler<T extends unknown[]>(fn: (...args: T) => Promise<unknown>) {
   return async (...args: T) => {
     try {
+      await loadClock(); // story time for this request (demo mode)
       const out = await fn(...args);
       return out instanceof Response ? out : NextResponse.json(out ?? { ok: true });
     } catch (e) {

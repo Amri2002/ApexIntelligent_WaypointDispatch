@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DispatcherShell, DepotSwitch, useDepot, DaySwitch, usePlanDate, Toast, brandTag } from '@/components/DispatcherShell';
 import { Icon } from '@/components/Icon';
+import { MoveDialog } from '@/components/MoveDialog';
 import { api } from '@/lib/client/api';
 import type { PlanView } from '@/lib/planService';
 import { fmt, prettyDate } from '@/lib/time';
@@ -27,6 +28,7 @@ export default function ShortfallPage() {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ msg: string; bad?: boolean } | null>(null);
+  const [placing, setPlacing] = useState<{ orderId: string; ref: string } | null>(null);
 
   const load = useCallback(() => { if (!date) return; return api<PlanView>(`/api/plans?depot=${depot}&date=${date}`).then((v) => {
     setView(v);
@@ -42,6 +44,7 @@ export default function ShortfallPage() {
   const proposed = useMemo(() => (view?.deferred ?? []).filter((d) => d.status === 'proposed'), [view]);
   const decided = useMemo(() => (view?.deferred ?? []).filter((d) => d.status !== 'proposed'), [view]);
   const t = view?.totals;
+  const published = view?.plan?.status === 'published';
   const toDefer = proposed.filter((d) => actions[d.orderId] !== 'request_window' && d.reasonCode !== 'OVERSIZE');
   const toAsk = proposed.filter((d) => actions[d.orderId] === 'request_window');
   const nextDate = proposed[0]?.toDate ?? decided[0]?.toDate;
@@ -55,6 +58,17 @@ export default function ShortfallPage() {
       setView(v);
       setToast({ msg: `${toDefer.length} deferrals recorded and stores notified${toAsk.length ? `; ${toAsk.length} stores asked` : ''}` });
     } catch (e) { setToast({ msg: (e as Error).message, bad: true }); }
+    setBusy(false);
+  }
+  async function place(orderId: string, vehicleId: string) {
+    if (!view?.plan) return;
+    setBusy(true);
+    try {
+      const ref = placing?.ref;
+      const v = await api<PlanView>(`/api/plans/${view.plan.id}/move`, { json: { orderId, vehicleId } });
+      setView(v); setPlacing(null);
+      setToast({ msg: `${ref} placed on ${vehicleId}. All checks pass; it is no longer deferred.` });
+    } catch (e) { setToast({ msg: `Not allowed: ${(e as Error).message}`, bad: true }); }
     setBusy(false);
   }
   async function split(orderId: string) {
@@ -104,6 +118,7 @@ export default function ShortfallPage() {
                                 <option value="defer">Defer → {prettyDate(d.toDate)}, wave 1, locked</option>
                                 {d.suggestion && <option value="request_window">Ask store to accept until {fmt(d.suggestion.newCloseMin)} · {d.suggestion.vehicleId}</option>}
                               </select>
+                              {!published && <button className="btn btn-sm btn-s" disabled={busy} onClick={() => setPlacing({ orderId: d.orderId, ref: d.order.ref })}>{d.reasonCode === 'MANUAL' ? 'Undo: put back on a vehicle…' : 'Place on a vehicle…'}</button>}
                               {d.outletSkippedYesterday && actions[d.orderId] !== 'request_window' && <input className="input" style={{ height: 32, fontSize: 12.5, borderColor: notes[d.orderId] ? undefined : 'var(--bad)' }} placeholder="Note required (second skip)" value={notes[d.orderId] ?? ''} onChange={(e) => setNotes({ ...notes, [d.orderId]: e.target.value })} />}
                             </div>
                           )}
@@ -138,6 +153,7 @@ export default function ShortfallPage() {
           </aside>
         </div>
       )}
+      {placing && view?.plan && <MoveDialog planId={view.plan.id} order={placing} verb="Place" busy={busy} onPick={(vid) => place(placing.orderId, vid)} onClose={() => setPlacing(null)} />}
       {toast && <Toast msg={toast.msg} bad={toast.bad} onDone={() => setToast(null)} />}
     </DispatcherShell>
   );

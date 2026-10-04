@@ -88,6 +88,17 @@ export async function seedOperational(client, dir) {
   ]);
 }
 
+/** Demo clock: the evening before the demo day, 21:00 Sri Lanka time (after the 16:00 cutoff, when the dispatcher plans). */
+export function demoClockStart(date = DEMO_DATE) {
+  const d = new Date(`${date}T00:00:00+05:30`);
+  return new Date(d.getTime() - 3 * 3600 * 1000); // 21:00 the previous evening
+}
+
+async function resetClock(client) {
+  const value = JSON.stringify({ storyMs: demoClockStart().getTime(), realMs: Date.now() });
+  await client.query(`INSERT INTO app_settings (key, value) VALUES ('demo_clock', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [value]);
+}
+
 export async function seedAll(client, { force = false } = {}) {
   const dir = resolveDataDir();
   const { rows: [o] } = await client.query('SELECT count(*)::int AS n FROM outlets');
@@ -100,9 +111,13 @@ export async function seedAll(client, { force = false } = {}) {
       await client.query('TRUNCATE outlets, vehicles, district_travel, service_allowance, traffic_speed, calendar_days, forecast_weeks CASCADE');
       await seedReference(client, dir);
       await seedOperational(client, dir);
+      await resetClock(client);
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK'); throw e; }
     return 'seeded demo day ' + DEMO_DATE;
   }
+  // A database seeded before the demo clock existed gets one now (never overwrites a running clock).
+  const value = JSON.stringify({ storyMs: demoClockStart().getTime(), realMs: Date.now() });
+  await client.query(`INSERT INTO app_settings (key, value) VALUES ('demo_clock', $1::jsonb) ON CONFLICT (key) DO NOTHING`, [value]);
   return 'already seeded';
 }

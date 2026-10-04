@@ -13,3 +13,28 @@ export function expectedArrival(etaMin: number, stopSeq: number, monsoon: boolea
   const [p20, p50, p80] = (monsoon ? ARRIVAL_DELAY.monsoon : ARRIVAL_DELAY.dry)[Math.min(Math.max(stopSeq, 1), 7) - 1];
   return { earliest: etaMin + p20, likely: etaMin + p50, latest: etaMin + p80 };
 }
+
+/**
+ * Live estimate once the truck has reported a stop. `last` is the latest stop on the same trip
+ * the driver has recorded (its stop position, planned ETA and actual arrival, all in minutes
+ * after midnight). Estimate = planned ETA + how late the truck is now + the extra delay trucks
+ * typically pick up between that stop and this one. Before any report it falls back to history.
+ */
+export function liveArrival(etaMin: number, stopSeq: number, monsoon: boolean, last?: { seq: number; etaMin: number; arrivedMin: number } | null) {
+  const hist = expectedArrival(etaMin, stopSeq, monsoon);
+  if (!last || last.seq >= stopSeq) return { ...hist, basis: 'history' as const, lateNowMin: null as number | null, lastSeq: null as number | null };
+  const table = monsoon ? ARRIVAL_DELAY.monsoon : ARRIVAL_DELAY.dry;
+  const at = (seq: number) => table[Math.min(Math.max(seq, 1), 7) - 1];
+  const [p20n, p50n, p80n] = at(stopSeq), [p20k, p50k, p80k] = at(last.seq);
+  const lateNowMin = Math.round(last.arrivedMin - last.etaMin);
+  const base = etaMin + lateNowMin;
+  const likely = base + Math.max(0, p50n - p50k);
+  return {
+    earliest: Math.min(likely, base + Math.max(0, p20n - p20k)),
+    likely,
+    latest: Math.max(likely, base + Math.max(0, p80n - p80k)),
+    basis: 'live' as const,
+    lateNowMin,
+    lastSeq: last.seq,
+  };
+}

@@ -36,3 +36,20 @@ describe('arrival-delay model', () => {
     expect(a.likely).toBeGreaterThan(300);
   });
 });
+
+import { liveArrival } from './arrivalDelay';
+describe('live arrival estimate', () => {
+  it('uses history until the truck reports a stop', () => {
+    expect(liveArrival(461, 5, true, null)).toMatchObject({ basis: 'history', likely: 461 + 74 });
+  });
+  it('adds measured lateness plus the typical delay still to come', () => {
+    // Stop 2 planned 05:30 (330), truck arrived 05:55 (355): 25 min late. Monsoon stop 5 vs 2: 74 − 44 = 30 more.
+    const a = liveArrival(461, 5, true, { seq: 2, etaMin: 330, arrivedMin: 355 });
+    expect(a).toMatchObject({ basis: 'live', lateNowMin: 25, likely: 461 + 25 + 30 });
+    expect(a.earliest).toBeLessThanOrEqual(a.likely);
+    expect(a.latest).toBeGreaterThanOrEqual(a.likely);
+  });
+  it('moves earlier when the truck is ahead of plan', () => {
+    expect(liveArrival(461, 5, false, { seq: 4, etaMin: 440, arrivedMin: 430 }).likely).toBeLessThan(461 + 36);
+  });
+});
