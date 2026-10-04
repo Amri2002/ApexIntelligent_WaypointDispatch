@@ -53,6 +53,8 @@ export default function DriverPage() {
   if (showReport) return <SyncReport report={report!} trip={trip} onDone={() => void clearReport()} />;
 
   const stop = trip?.stops.find((s) => s.id === openStop);
+  // A finished stop opens as a read-only record of what was saved, never as a new form.
+  if (trip && stop && stopStatus(stop) !== 'pending') return <StopRecord trip={trip} stop={stop} saved={local.stops.get(stop.id)} onBack={() => setOpenStop(null)} />;
   if (trip && stop) return <StopScreen key={stop.id} trip={trip} stop={stop} date={run!.date} online={online} pendingCount={pending.length} onDone={(next) => setOpenStop(next ?? null)} />;
 
   const next = trip?.stops.find((s) => stopStatus(s) === 'pending');
@@ -81,7 +83,7 @@ export default function DriverPage() {
           </div>
           <div className="blk" style={{ padding: '4px 14px', gap: 0 }}>
             {trip.stops.map((s) => { const st = stopStatus(s); return (
-              <button key={s.id} disabled={!departed} onClick={() => setOpenStop(s.id)} style={{ display: 'grid', gridTemplateColumns: '30px 1fr auto', gap: 10, alignItems: 'center', padding: '10px 0', border: 0, borderBottom: '1px solid var(--line-soft)', background: 'transparent', textAlign: 'left', cursor: departed ? 'pointer' : 'default', color: 'inherit', font: 'inherit' }}>
+              <button key={s.id} disabled={!departed} onClick={() => { if (st === 'pending' && next && s.id !== next.id && !confirm(`${next.outletId} is next on your run. Arrive at ${s.outletId} now instead? The arrival time is recorded.`)) return; setOpenStop(s.id); }} style={{ display: 'grid', gridTemplateColumns: '30px 1fr auto', gap: 10, alignItems: 'center', padding: '10px 0', border: 0, borderBottom: '1px solid var(--line-soft)', background: 'transparent', textAlign: 'left', cursor: departed ? 'pointer' : 'default', color: 'inherit', font: 'inherit' }}>
                 <span style={{ width: 28, height: 28, borderRadius: '50%', border: '2px solid var(--ink)', display: 'grid', placeItems: 'center', font: '700 13px var(--font-head)', background: st !== 'pending' ? 'var(--ink)' : '#fff', color: st !== 'pending' ? '#fff' : 'var(--ink)' }}>{st !== 'pending' ? <Icon name="check" size={14} /> : s.seq}</span>
                 <span><b className="mono">{s.outletId}</b>{local.stops.has(s.id) && <span className="tag t-off" style={{ marginLeft: 6 }}>Saved on phone</span>}<br /><span className="muted" style={{ fontSize: 13 }}>Window {s.outlet.windowOpen}–{s.outlet.windowClose} · {s.expectedUnits} units{s.shortBy ? ` (was ${s.units})` : ''}</span></span>
                 <b>{st !== 'pending' ? 'Done' : fmt(s.etaMin)}</b>
@@ -96,6 +98,36 @@ export default function DriverPage() {
           : next ? <button className="btn btn-p btn-lg grow" onClick={() => setOpenStop(next.id)}>Arrived at {next.outletId}</button>
           : <button className="btn btn-p btn-lg grow" disabled>All stops done</button>}
       </footer>}
+    </div>
+  );
+}
+
+/** Read-only view of a stop that is already done: what was recorded and whether it has been sent. */
+function StopRecord({ trip, stop, saved, onBack }: { trip: TripView; stop: Stop; saved?: Record<string, unknown>; onBack: () => void }) {
+  // Prefer what is still on the phone (not sent yet); otherwise what the server has.
+  const r = saved ?? (stop as unknown as Record<string, unknown>);
+  const outcome = String(saved ? saved.outcome : stop.status);
+  const label = OUTCOMES.find(([k]) => k === outcome)?.[1] ?? outcome;
+  const arrived = (saved?.arrivedAt as string | undefined) ?? (stop.arrivedAt as unknown as string | null);
+  const units = r.deliveredUnits as number | null | undefined;
+  return (
+    <div className="phone">
+      <FieldBar kicker={`Stop ${stop.seq} of ${trip.stops.length} · done`} title={<><span className="mono">{stop.outletId}</span> · {stop.outlet.district}</>} />
+      <main className="pbody" style={{ gap: 10 }}>
+        <button className="btn btn-sm btn-s" style={{ alignSelf: 'flex-start' }} onClick={onBack}><Icon name="back" size={14} />Run</button>
+        <div className="blk" style={{ gap: 6 }}>
+          <span className={`tag ${saved ? 't-off' : 't-ok'}`} style={{ alignSelf: 'flex-start' }}>{saved ? 'Saved on phone · sends when signal returns' : 'Sent to the office'}</span>
+          <b className="h" style={{ fontSize: 20 }}>{label}{units != null && outcome !== 'refused' && outcome !== 'no_access' ? ` · ${units} units` : ''}</b>
+          <span style={{ fontSize: 14 }}>Arrived <b>{slTime(arrived)}</b>{!saved && stop.completedAt ? <> · completed <b>{slTime(stop.completedAt)}</b></> : null}</span>
+          {r.receiverName ? <span style={{ fontSize: 14 }}>Received by <b>{String(r.receiverName)}</b></span> : null}
+        </div>
+        {(r.signature || r.photo) ? <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
+          {r.signature ? <div className="blk grow" style={{ gap: 4 }}><span className="lbl">Signature</span><img src={String(r.signature)} alt="Receiver's signature" style={{ width: '100%', maxHeight: 120, objectFit: 'contain', background: '#fff' }} /></div> : null}
+          {r.photo ? <div className="blk grow" style={{ gap: 4 }}><span className="lbl">Photo</span><img src={String(r.photo)} alt="Goods at the door" style={{ width: '100%', maxHeight: 120, objectFit: 'cover', borderRadius: 8 }} /></div> : null}
+        </div> : null}
+        {stop.receipt && <div className="blk" style={{ fontSize: 14 }}><span className="lbl">Store</span>{stop.receipt.status === 'confirmed' ? 'The store confirmed it received everything.' : `The store reported ${String(stop.receipt.issueType ?? 'an issue').replace('_', ' ')}${stop.receipt.matchedFlagId ? ', matched to the loader\'s flag. Nothing for you to do.' : '. The dispatcher will follow up.'}`}</div>}
+        <span className="muted" style={{ fontSize: 13 }}>A stop is recorded once. To change it, call the dispatcher.</span>
+      </main>
     </div>
   );
 }
