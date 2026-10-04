@@ -3,7 +3,7 @@
 import { and, eq, inArray, sql, asc } from 'drizzle-orm';
 import { db, schema as s } from '@/db';
 import { Engine, planDay, type Draft } from './engine/plan';
-import type { EngineInput, EOrder, PlannedTrip } from './engine/types';
+import type { EngineInput, EOrder, EVehicle, PlannedTrip } from './engine/types';
 import { HttpError } from './auth';
 import { prettyDate } from './time';
 import { fmt } from './engine/plan';
@@ -272,6 +272,49 @@ function draftsFor(view: PlanView, vehicleId: string): Draft[] {
 }
 
 /**
+ * Adds an order to a vehicle's day: tries each of its trips to the same brand and district, then
+ * a new trip, and keeps the first arrangement that passes every rule (or the first failure).
+ */
+function placeOnVehicle(engine: Engine, v: EVehicle, base: Draft[], eo: EOrder, brand: string, district: string) {
+  const attempts: Draft[][] = [];
+  base.forEach((d, j) => { if (d.brand === brand && d.district === district) attempts.push(base.map((x, k) => (k === j ? { ...x, orders: [...x.orders, eo] } : x))); });
+  attempts.push([...base, { brand, district, orders: [eo] }]);
+  let first: { next: Draft[]; violations: ReturnType<Engine['validate']>; joinsTrip: boolean } | null = null;
+  for (const [n, next] of attempts.entries()) {
+    const violations = engine.validate(v, next);
+    const r = { next, violations, joinsTrip: n < attempts.length - 1 };
+    if (!violations.length) return r;
+    first ??= r;
+  }
+  return first!;
+}
+
+/**
+ * Where an order could go: every available vehicle except the one carrying it, each dry-run
+ * through the same checks as a real move. Legal vehicles first, then the rest with the rule
+ * that blocks them, so the dispatcher sees why before trying.
+ */
+export async function moveOptions(planId: string, orderId: string) {
+  const plan = (await db.select().from(s.plans).where(eq(s.plans.id, planId)))[0];
+  if (!plan) throw new HttpError(404, 'Plan not found');
+  const view = await getPlanView(plan.depot, plan.date);
+  const order = (await db.select().from(s.orders).where(eq(s.orders.id, orderId)))[0];
+  if (!order) throw new HttpError(404, 'Order not found');
+  const input = await engineInput(plan.depot, plan.date);
+  const engine = new Engine(input);
+  const eo = toEOrder(order);
+  const outlet = input.outlets.get(order.outletId)!;
+  const fromTrip = view.trips.find((t) => t.stops.some((x) => x.orders.some((o) => o.id === orderId)));
+  const options = input.vehicles.filter((v) => v.depot === plan.depot && v.status === 'available' && v.id !== fromTrip?.vehicleId).map((v) => {
+    const { violations, joinsTrip } = placeOnVehicle(engine, v, draftsFor(view, v.id), eo, outlet.brand, outlet.district);
+    const used = view.trips.filter((t) => t.vehicleId === v.id);
+    return { vehicleId: v.id, temp: v.temp, type: v.type, volumeCapM3: v.volumeCapM3, trips: used.length, joinsTrip, ok: violations.length === 0, reason: violations[0]?.message ?? null };
+  });
+  options.sort((a, b) => Number(b.ok) - Number(a.ok) || Number(b.joinsTrip) - Number(a.joinsTrip) || a.vehicleId.localeCompare(b.vehicleId));
+  return { orderId, ref: order.ref, from: fromTrip?.vehicleId ?? null, options };
+}
+
+/**
  * Moves an order onto a vehicle (joining its trip to the same brand and district, or opening a
  * new trip) or takes it off the plan. Every affected vehicle's day is re-validated; the change is
  * rejected with reasons if any rule breaks.
@@ -283,6 +326,8 @@ export async function moveOrder(planId: string, orderId: string, target: { vehic
   const view = await getPlanView(plan.depot, plan.date);
   const order = (await db.select().from(s.orders).where(eq(s.orders.id, orderId)))[0];
   if (!order) throw new HttpError(404, 'Order not found');
+  // A confirmed deferral has been sent to the store and has a copy on the next run; it stays there.
+  if (order.status === 'deferred' || order.status === 'split') throw new HttpError(409, `${order.ref} is already ${order.status === 'split' ? 'split' : 'deferred and the store has been told'}; it is handled on the next run`);
   const input = await engineInput(plan.depot, plan.date, { windowExtensions });
   const engine = new Engine(input);
   const eo = toEOrder(order);
@@ -295,9 +340,7 @@ export async function moveOrder(planId: string, orderId: string, target: { vehic
     const v = input.vehicles.find((x) => x.id === target.vehicleId);
     if (!v) throw new HttpError(404, 'Vehicle not found');
     const base = changes.get(v.id) ?? draftsFor(view, v.id);
-    const i = base.findIndex((d) => d.brand === outlet.brand && d.district === outlet.district);
-    const next = i >= 0 ? base.map((d, j) => (j === i ? { ...d, orders: [...d.orders, eo] } : d)) : [...base, { brand: outlet.brand, district: outlet.district, orders: [eo] }];
-    const violations = engine.validate(v, next);
+    const { next, violations } = placeOnVehicle(engine, v, base, eo, outlet.brand, outlet.district);
     if (violations.length) throw Object.assign(new HttpError(422, violations.map((x) => x.message).join(' · ')), { violations });
     changes.set(v.id, next);
   }

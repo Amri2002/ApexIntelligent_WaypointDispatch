@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DispatcherShell, DepotSwitch, useDepot, DaySwitch, usePlanDate, Toast } from '@/components/DispatcherShell';
 import { Icon } from '@/components/Icon';
+import { MoveDialog } from '@/components/MoveDialog';
 import { api, ApiError } from '@/lib/client/api';
 import type { PlanView } from '@/lib/planService';
 import { fmt, prettyDate } from '@/lib/time';
@@ -115,22 +116,7 @@ export default function PlanPage() {
           {trip && <TripPanel trip={trip} view={view} onMove={(o) => setMoving(o)} busy={busy} published={published} onUnplace={(id) => move(id, null)} onBreakdown={breakdown} />}
         </div>
       )}
-      {moving && view && (
-        <div role="dialog" aria-label="Move order" style={{ position: 'fixed', inset: 0, background: 'rgba(22,24,29,.45)', display: 'grid', placeItems: 'center', zIndex: 40 }} onClick={() => setMoving(null)}>
-          <div className="card col" style={{ padding: 20, width: 420, maxWidth: '92vw' }} onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ fontSize: 18 }}>Move {moving.ref} to…</h2>
-            <p className="muted" style={{ margin: 0, fontSize: 13 }}>Every rule is re-checked. If the move breaks one, it is refused with the reason.</p>
-            <div className="col scroll" style={{ maxHeight: 360, gap: 6 }}>
-              {view.vehicles.filter((v) => v.status === 'available').map((v) => (
-                <button key={v.id} className="btn btn-s" style={{ justifyContent: 'space-between' }} disabled={busy} onClick={() => move(moving.orderId, v.id)}>
-                  <span className="mono">{v.id}</span><span className="muted" style={{ fontWeight: 500 }}>{v.temp} {v.type} · {v.volumeCapM3} m³ · {trips.filter((x) => x.vehicleId === v.id).length} trips</span>
-                </button>
-              ))}
-            </div>
-            <button className="btn btn-s" onClick={() => setMoving(null)}>Cancel</button>
-          </div>
-        </div>
-      )}
+      {moving && view?.plan && <MoveDialog planId={view.plan.id} order={moving} verb="Move" busy={busy} onPick={(vid) => move(moving.orderId, vid)} onClose={() => setMoving(null)} />}
       {toast && <Toast msg={toast.msg} bad={toast.bad} onDone={() => setToast(null)} />}
     </DispatcherShell>
   );
